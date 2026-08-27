@@ -342,7 +342,10 @@ function parseHaAutomation(config, state, availableEntities = new Set()) {
   const targetIds = Array.isArray(action?.target?.entity_id) ? action.target.entity_id : [action?.target?.entity_id];
   const automationAction = service === 'homeassistant.turn_off' ? 'turn_off' : service === 'homeassistant.turn_on' ? 'turn_on' : null;
   if (!trigger || !automationAction || targetIds.some((entity) => typeof entity !== 'string')) return null;
-  const domainTarget = targetIds.length === 1 && (/^([a-z_]+)\.\*$/.exec(targetIds[0]) || /^\{\{\s*states\.([a-z_]+)\s*\|/.exec(targetIds[0]));
+  const domainMatch = targetIds.length === 1
+    ? (/^([a-z_]+)\.\*$/.exec(targetIds[0]) || /^\{\{\s*states\.([a-z_]+)\s*\|/.exec(targetIds[0]) || /states\.(climate|light)\b/.exec(targetIds[0]))
+    : null;
+  const domainTarget = Boolean(domainMatch);
   const weekdays = Array.isArray(trigger.weekday) ? trigger.weekday : ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
   const dayMap = new Map([['sun', 0], ['mon', 1], ['tue', 2], ['wed', 3], ['thu', 4], ['fri', 5], ['sat', 6]]);
   const normalizedTargetIds = targetIds.map((id) => {
@@ -355,7 +358,7 @@ function parseHaAutomation(config, state, availableEntities = new Set()) {
     name: String(config.alias).replace(`${AUTOMATION_MARKER} `, ''),
     entity_ids: domainTarget ? [] : normalizedTargetIds,
     target_mode: domainTarget ? 'domain' : 'devices',
-    ...(domainTarget ? { target_domain: domainTarget[1] } : {}),
+    ...(domainTarget ? { target_domain: domainMatch?.[1] } : {}),
     action: automationAction,
     time: parseHaTime(trigger.at),
     days: weekdays.map((day) => dayMap.get(String(day).slice(0, 3).toLowerCase())).filter((day) => day !== undefined),
@@ -409,7 +412,7 @@ function toHaAutomation(automation, availableEntities) {
     ? automation.entity_ids
     : automation.entity_ids.flatMap((entityId) => lightControlEntities(entityId, availableEntities));
   const domainTarget = automation.target_domain === 'light'
-    ? "{% set ns = namespace(ids=[]) %}{% for light in states.light if light.entity_id is search('_indicator_light(?:_\\d+)?$') %}{% set stem = light.entity_id[6:] | regex_replace('_indicator_light(?:_\\d+)?$', '') %}{% set pattern = '^switch\\.' ~ stem ~ '(_switch|_(left|middle|right)_switch_service)$' %}{% set ns.ids = ns.ids + (states.switch | selectattr('entity_id', 'search', pattern) | map(attribute='entity_id') | list) %}{% endfor %}{{ ns.ids | unique | list }}"
+    ? "{% set ns = namespace(ids=states.light | rejectattr('entity_id', 'search', '_indicator_light(?:_\\d+)?$') | map(attribute='entity_id') | list) %}{% for light in states.light if light.entity_id is search('_indicator_light(?:_\\d+)?$') %}{% set stem = light.entity_id[6:] | regex_replace('_indicator_light(?:_\\d+)?$', '') %}{% set pattern = '^switch\\.' ~ stem ~ '(_switch|_(left|middle|right)_switch_service)$' %}{% set ns.ids = ns.ids + (states.switch | selectattr('entity_id', 'search', pattern) | map(attribute='entity_id') | list) %}{% endfor %}{{ ns.ids | unique | list }}"
     : `{{ states.${automation.target_domain} | map(attribute='entity_id') | list }}`;
   return {
     id: automation.id,
