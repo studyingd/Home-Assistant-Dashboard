@@ -15,6 +15,7 @@ export function validateDashboard(value) {
     ids.add(region.id);
     if (region.icon !== undefined && !validateString(region.icon, 50)) return false;
     if (region.hiddenFromUsers !== undefined && typeof region.hiddenFromUsers !== 'boolean') return false;
+    const regionDeviceIds = new Set();
     blocks += region.blocks.length;
     if (blocks > 250) return false;
     for (const block of region.blocks) {
@@ -32,6 +33,8 @@ export function validateDashboard(value) {
         if (!['climate', 'sensor', 'cover', 'light', 'switch', 'generic'].includes(device.type)) return false;
         if (entityIds.has(device.entity_id)) return false;
         entityIds.add(device.entity_id);
+        if (regionDeviceIds.has(device.entity_id)) return false;
+        regionDeviceIds.add(device.entity_id);
         if (device.name !== undefined && !validateString(device.name, 100)) return false;
         if (device.icon !== undefined && !validateString(device.icon, 50)) return false;
         if (device.coverVariant !== undefined && !['window', 'curtain'].includes(device.coverVariant)) return false;

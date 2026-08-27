@@ -76,12 +76,15 @@ interface DevicePickerDialogProps {
 
 export function DevicePickerDialog({ block, onClose }: DevicePickerDialogProps) {
   const { states } = useHass();
-  const { addDevices } = useDashboardConfig();
+  const { regions, addDevices } = useDashboardConfig();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<DomainFilter>('all');
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const existing = useMemo(() => new Set(block.devices.map((d) => d.entity_id)), [block.devices]);
+  const regionExisting = useMemo(() => {
+    const region = regions.find((item) => item.blocks.some((candidate) => candidate.id === block.id));
+    return new Set(region?.blocks.flatMap((candidate) => candidate.devices.map((device) => device.entity_id)) ?? []);
+  }, [regions, block.id]);
 
   const rows = useMemo(() => {
     if (!states) return [];
@@ -171,7 +174,7 @@ export function DevicePickerDialog({ block, onClose }: DevicePickerDialogProps) 
               const domain = domainOf(entity.entity_id);
               const friendlyName = String(entity.attributes.friendly_name ?? entity.entity_id);
               const channel = domain === 'switch' ? switchChannelLabel(entity.entity_id, friendlyName) : null;
-              const added = existing.has(entity.entity_id);
+              const added = regionExisting.has(entity.entity_id);
               const checked = selected.has(entity.entity_id);
               return (
                 <div
@@ -204,7 +207,7 @@ export function DevicePickerDialog({ block, onClose }: DevicePickerDialogProps) 
             })}
           </div>
         )}
-        <p className="picker-hint">实体 ID 可在 Home Assistant「开发者工具 → 状态」中查看</p>
+        <p className="picker-hint">同一区域内的设备不能重复添加；实体 ID 可在 Home Assistant「开发者工具 → 状态」中查看</p>
       </div>
     </Dialog>
   );
