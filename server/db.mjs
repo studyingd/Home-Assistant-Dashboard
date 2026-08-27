@@ -245,7 +245,7 @@ export async function createConfigStore({ importFile, connectionFile, passwordFi
     if (process.env.PGHOST && (envPassword || process.env.PGPASSWORD)) {
       try { await connect({ host: process.env.PGHOST, port: process.env.PGPORT, database: process.env.PGDATABASE || 'ha_dashboard', user: process.env.PGUSER || 'ha_dashboard', password: envPassword || process.env.PGPASSWORD, ssl: process.env.PGSSLMODE === 'require' }); }
       catch (error) { status = 'error'; console.error('[ha-dashboard] PostgreSQL 连接失败:', error.message); }
-    } else {
+    } else if (process.env.NODE_ENV !== 'production') {
       // 本地开发默认连接项目随附的 PostgreSQL 容器，不依赖 .env 或手工导出环境变量。
       // 服务器 Docker 部署仍优先使用上面的 PGHOST/PGPASSWORD_FILE 配置。
       const localPassword = await readText(join(HERE, '..', 'secrets', 'postgres-password'));
@@ -258,6 +258,9 @@ export async function createConfigStore({ importFile, connectionFile, passwordFi
           console.error('[ha-dashboard] 本地 PostgreSQL 连接失败:', error.message);
         }
       }
+    } else {
+      // 生产环境支持通过管理员页面首次配置数据库，不尝试连接容器自身的 127.0.0.1。
+      status = 'unconfigured';
     }
   }
 
