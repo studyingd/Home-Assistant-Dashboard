@@ -57,10 +57,6 @@ export function RegionNav({
         {regions.map((region, regionIndex) => {
           const active = region.id === activeRegionId;
           const dropSide = over?.id === region.id ? (over.after ? ' drop-after' : ' drop-before') : '';
-          const moveRegionBy = (offset: -1 | 1) => {
-            const target = regions[regionIndex + offset];
-            if (target) onMoveRegion(region.id, target.id, offset > 0);
-          };
           return (
             <div
               className={`region-tab${active ? ' active' : ''}${dragId === region.id ? ' dragging' : ''}${dropSide}`}
@@ -108,16 +104,6 @@ export function RegionNav({
               >
                 <span className="region-tab__name">{region.name}{region.hiddenFromUsers && editMode && <Icon name="lock" size={12} />}</span>
               </button>
-              {editMode && (
-                <span className="region-tab__actions">
-                  <button type="button" className="region-tab__action" aria-label={`上移区域「${region.name}」`} title="上移" disabled={regionIndex === 0} onClick={(event) => { event.stopPropagation(); moveRegionBy(-1); }}>
-                    <Icon name="arrow-up" size={13} />
-                  </button>
-                  <button type="button" className="region-tab__action" aria-label={`下移区域「${region.name}」`} title="下移" disabled={regionIndex === regions.length - 1} onClick={(event) => { event.stopPropagation(); moveRegionBy(1); }}>
-                    <Icon name="arrow-down" size={13} />
-                  </button>
-                </span>
-              )}
               {editMode && active && (
                 <span className="region-tab__actions">
                   <button
