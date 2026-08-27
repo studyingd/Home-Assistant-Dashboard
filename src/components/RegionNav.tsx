@@ -54,7 +54,7 @@ export function RegionNav({
           if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(null);
         }}
       >
-        {regions.map((region, regionIndex) => {
+        {regions.map((region) => {
           const active = region.id === activeRegionId;
           const dropSide = over?.id === region.id ? (over.after ? ' drop-after' : ' drop-before') : '';
           return (
