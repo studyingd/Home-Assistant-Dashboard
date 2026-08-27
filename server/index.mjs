@@ -757,7 +757,20 @@ const server = createServer(async (req, res) => {
       sendJson(res, 403, { error: 'network_not_allowed' });
       return;
     }
-    const { pathname } = new URL(req.url || '/', 'http://localhost');
+    const rawRequestUrl = req.url || '/';
+    // Node 的 URL 解析器会把 `//management` 当成主机名，因此必须在解析前
+    // 规范化重复前导斜杠，否则管理页会落到错误的根路径。
+    const canonicalRequestUrl = rawRequestUrl.replace(/^\/{2,}/, '/');
+    if (canonicalRequestUrl !== rawRequestUrl) {
+      res.writeHead(308, {
+        location: canonicalRequestUrl,
+        'cache-control': 'no-store',
+      });
+      res.end();
+      return;
+    }
+    const requestUrl = new URL(canonicalRequestUrl, 'http://localhost');
+    const { pathname } = requestUrl;
     if (pathname.startsWith('/api/')) {
       await handleApi(req, res, pathname);
       return;
