@@ -290,7 +290,8 @@ async function syncDeviceAutomationLogs(entityId) {
   const entries = await haRest(`/api/logbook/${encodeURIComponent(start)}?${params.toString()}`);
   if (!Array.isArray(entries)) return;
   for (const entry of entries) {
-    if (entry?.entity_id !== entityId || !entry?.context_parent_id) continue;
+    const isAutomationEntry = entry?.context_parent_id || entry?.context_domain === 'automation' || entry?.context_event_type === 'automation_triggered';
+    if (entry?.entity_id !== entityId || !isAutomationEntry) continue;
     const occurredAt = entry.when || entry.timestamp || entry.time;
     const action = String(entry.message || entry.state || '状态变化').trim().slice(0, 120) || '状态变化';
     const externalKey = `ha-logbook:${entityId}:${entry.context_id || `${occurredAt || ''}|${action}`}`;
@@ -299,14 +300,17 @@ async function syncDeviceAutomationLogs(entityId) {
       occurred_at: occurredAt,
       action,
       source: 'automation',
-      automation_name: entry.domain === 'automation' && typeof entry.name === 'string' && entry.name.trim()
-        ? entry.name.trim().slice(0, 120)
+      automation_name: typeof entry.context_name === 'string' && entry.context_name.trim()
+        ? entry.context_name.trim().slice(0, 120)
+        : typeof entry.name === 'string' && entry.name.trim()
+          ? entry.name.trim().slice(0, 120)
         : 'Home Assistant 自动化',
       success: true,
       external_key: externalKey,
       metadata: {
         context_id: entry.context_id ?? null,
         context_parent_id: entry.context_parent_id ?? null,
+        context_entity_id: entry.context_entity_id ?? null,
         state: entry.state ?? null,
       },
     });
@@ -330,7 +334,7 @@ function parseHaTime(value) {
   return match ? `${match[1]}:${match[2]}` : null;
 }
 
-function parseHaAutomation(config, state) {
+function parseHaAutomation(config, state, availableEntities = new Set()) {
   if (!config || typeof config !== 'object' || !String(config.alias || '').startsWith(AUTOMATION_MARKER)) return null;
   const trigger = Array.isArray(config.triggers) ? config.triggers.find((item) => item?.trigger === 'time' && parseHaTime(item.at)) : null;
   const action = Array.isArray(config.actions) ? config.actions[0] : null;
@@ -341,10 +345,15 @@ function parseHaAutomation(config, state) {
   const domainTarget = targetIds.length === 1 && (/^([a-z_]+)\.\*$/.exec(targetIds[0]) || /^\{\{\s*states\.([a-z_]+)\s*\|/.exec(targetIds[0]));
   const weekdays = Array.isArray(trigger.weekday) ? trigger.weekday : ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
   const dayMap = new Map([['sun', 0], ['mon', 1], ['tue', 2], ['wed', 3], ['thu', 4], ['fri', 5], ['sat', 6]]);
+  const normalizedTargetIds = targetIds.map((id) => {
+    const match = /^switch\.(.+)_(?:left|middle|right)_switch_service$/.exec(id) || /^switch\.(.+)_switch$/.exec(id);
+    const indicator = match ? `light.${match[1]}_indicator_light` : '';
+    return indicator && availableEntities.has(indicator) ? indicator : id;
+  });
   return {
     id: String(config.id),
     name: String(config.alias).replace(`${AUTOMATION_MARKER} `, ''),
-    entity_ids: domainTarget ? [] : targetIds,
+    entity_ids: domainTarget ? [] : normalizedTargetIds,
     target_mode: domainTarget ? 'domain' : 'devices',
     ...(domainTarget ? { target_domain: domainTarget[1] } : {}),
     action: automationAction,
@@ -360,9 +369,10 @@ async function readHaAutomations() {
   const automationStates = Array.isArray(states)
     ? states.filter((item) => String(item?.entity_id || '').startsWith('automation.') && String(item.attributes?.friendly_name || '').startsWith(AUTOMATION_MARKER))
     : [];
+  const availableEntities = new Set(Array.isArray(states) ? states.map((item) => item?.entity_id).filter((id) => typeof id === 'string') : []);
   const configs = await Promise.all(automationStates.map(async (state) => {
     try {
-      return parseHaAutomation(await haRest(`/api/config/automation/config/${encodeURIComponent(state.attributes?.id || '')}`), state);
+      return parseHaAutomation(await haRest(`/api/config/automation/config/${encodeURIComponent(state.attributes?.id || '')}`), state, availableEntities);
     } catch {
       return null;
     }
@@ -384,15 +394,30 @@ async function readHaAutomationSummary() {
     : [];
 }
 
-function toHaAutomation(automation) {
+function lightControlEntities(entityId, availableEntities) {
+  if (!/^light\..*_indicator_light(?:_\d+)?$/.test(entityId)) return [entityId];
+  const stem = entityId.slice('light.'.length).replace(/_indicator_light(?:_\d+)?$/, '');
+  const candidates = ['_switch', '_left_switch_service', '_middle_switch_service', '_right_switch_service']
+    .map((suffix) => `switch.${stem}${suffix}`)
+    .filter((id) => !availableEntities || availableEntities.has(id));
+  return candidates.length > 0 ? candidates : [entityId];
+}
+
+function toHaAutomation(automation, availableEntities) {
   const weekdays = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const targetIds = automation.target_mode === 'domain'
+    ? automation.entity_ids
+    : automation.entity_ids.flatMap((entityId) => lightControlEntities(entityId, availableEntities));
+  const domainTarget = automation.target_domain === 'light'
+    ? "{% set ns = namespace(ids=[]) %}{% for light in states.light if light.entity_id is search('_indicator_light(?:_\\d+)?$') %}{% set stem = light.entity_id[6:] | regex_replace('_indicator_light(?:_\\d+)?$', '') %}{% set pattern = '^switch\\.' ~ stem ~ '(_switch|_(left|middle|right)_switch_service)$' %}{% set ns.ids = ns.ids + (states.switch | selectattr('entity_id', 'search', pattern) | map(attribute='entity_id') | list) %}{% endfor %}{{ ns.ids | unique | list }}"
+    : `{{ states.${automation.target_domain} | map(attribute='entity_id') | list }}`;
   return {
     id: automation.id,
     alias: `${AUTOMATION_MARKER} ${automation.name}`,
     description: '由 Seeed 办公看板管理',
     triggers: [{ trigger: 'time', at: `${automation.time}:00`, weekday: automation.days.map((day) => weekdays[day]) }],
     conditions: [],
-    actions: [{ action: `homeassistant.${automation.action}`, target: { entity_id: automation.target_mode === 'domain' ? `{{ states.${automation.target_domain} | map(attribute='entity_id') | list }}` : automation.entity_ids } }],
+    actions: [{ action: `homeassistant.${automation.action}`, target: { entity_id: automation.target_mode === 'domain' ? domainTarget : targetIds } }],
     mode: 'single',
     initial_state: automation.enabled !== false,
   };
@@ -416,6 +441,8 @@ async function setHaAutomationState(automation) {
 
 async function writeHaAutomations(automations) {
   const current = await readHaAutomations();
+  const availableStates = await haRest('/api/states');
+  const availableEntities = new Set(Array.isArray(availableStates) ? availableStates.map((state) => state?.entity_id).filter((id) => typeof id === 'string') : []);
   const snapshot = current.map((item) => ({ ...item }));
   const nextIds = new Set(automations.map((item) => item.id));
   const currentIds = new Set([...managedAutomationIds, ...current.map((item) => item.id)]);
@@ -423,7 +450,7 @@ async function writeHaAutomations(automations) {
     for (const item of automations) {
       await haRest(`/api/config/automation/config/${encodeURIComponent(item.id)}`, {
         method: 'POST',
-        body: JSON.stringify(toHaAutomation(item)),
+        body: JSON.stringify(toHaAutomation(item, availableEntities)),
       });
       await setHaAutomationState(item);
     }
@@ -441,7 +468,7 @@ async function writeHaAutomations(automations) {
     await Promise.allSettled([...nextIds].filter((id) => !snapshotIds.has(id)).map((id) => haRest(`/api/config/automation/config/${encodeURIComponent(id)}`, { method: 'DELETE' })));
     await Promise.allSettled(snapshot.map((item) => haRest(`/api/config/automation/config/${encodeURIComponent(item.id)}`, {
       method: 'POST',
-      body: JSON.stringify(toHaAutomation(item)),
+      body: JSON.stringify(toHaAutomation(item, availableEntities)),
     }).then(() => setHaAutomationState(item))));
     throw error;
   }
