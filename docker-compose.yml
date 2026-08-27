@@ -1,0 +1,89 @@
+services:
+  dashboard-postgres:
+    image: postgres:16-alpine
+    container_name: ha-dashboard-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ha_dashboard
+      POSTGRES_USER: ha_dashboard
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    volumes:
+      - dashboard-postgres-data:/var/lib/postgresql/data
+    secrets:
+      - postgres_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ha_dashboard -d ha_dashboard"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks:
+      - dashboard-db
+
+  ha-dashboard:
+    build: .
+    image: ha-dashboard
+    container_name: ha-dashboard
+    restart: unless-stopped
+    depends_on:
+      dashboard-postgres:
+        condition: service_healthy
+    # 仅在 Traefik 同一 Docker 网络中暴露服务，不绕过反向代理公开宿主机端口。
+    expose:
+      - "5174"
+    volumes:
+      - ./data:/data
+    secrets:
+      - ha_token
+      - admin_password_hash
+      - session_secret
+      - postgres_password
+    environment:
+      NODE_ENV: production
+      HASS_TOKEN_FILE: /run/secrets/ha_token
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD_HASH_FILE: /run/secrets/admin_password_hash
+      SESSION_SECRET_FILE: /run/secrets/session_secret
+      PGHOST: dashboard-postgres
+      PGPORT: "5432"
+      PGDATABASE: ha_dashboard
+      PGUSER: ha_dashboard
+      PGPASSWORD_FILE: /run/secrets/postgres_password
+      DB_PASSWORD_FILE: /data/postgres-connection-password
+      COOKIE_SECURE: "false"
+      APP_ORIGIN: http://dashboard.seeed.cc
+      # Node 位于 Traefik 后面，即使链路是 HTTP，也需要信任 Traefik 转发的客户端 IP/Host。
+      TRUST_PROXY: "true"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ha-dashboard.rule=Host(`dashboard.seeed.cc`)"
+      - "traefik.http.routers.ha-dashboard.entrypoints=ha"
+      - "traefik.http.services.ha-dashboard.loadbalancer.server.port=5174"
+    networks:
+      - proxy
+      - dashboard-db
+
+volumes:
+  dashboard-postgres-data:
+
+networks:
+  proxy:
+    external: true
+  dashboard-db:
+    internal: true
+
+secrets:
+  ha_token:
+    file: ./secrets/ha-token
+  admin_password_hash:
+    file: ./secrets/admin-password-hash
+  session_secret:
+    file: ./secrets/session-secret
+  postgres_password:
+    file: ./secrets/postgres-password

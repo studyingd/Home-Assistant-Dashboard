@@ -1,0 +1,51 @@
+/* cover 卡片的简易开合示意 */
+
+.cover-visual {
+  position: relative;
+  height: 64px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+}
+
+/* 窗帘:两片从中间向两侧收开;窗户:整体透明度示意 */
+.cover-visual__panel {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    var(--accent-soft) 0%,
+    var(--accent-soft) 46%,
+    transparent 50%,
+    var(--accent-soft) 54%,
+    var(--accent-soft) 100%
+  );
+  opacity: calc(1 - var(--openness) / 130);
+  transition: opacity 300ms ease;
+}
+
+.cover-controls {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.cover-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cover-slider .slider {
+  flex: 1;
+}
+
+.cover-slider__value {
+  min-width: 42px;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
