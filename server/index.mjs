@@ -301,9 +301,9 @@ async function syncDeviceAutomationLogs(entityId) {
       action,
       source: 'automation',
       automation_name: typeof entry.context_name === 'string' && entry.context_name.trim()
-        ? entry.context_name.trim().slice(0, 120)
+        ? entry.context_name.trim().replace(`${AUTOMATION_MARKER} `, '').slice(0, 120)
         : typeof entry.name === 'string' && entry.name.trim()
-          ? entry.name.trim().slice(0, 120)
+          ? entry.name.trim().replace(`${AUTOMATION_MARKER} `, '').slice(0, 120)
         : 'Home Assistant 自动化',
       success: true,
       external_key: externalKey,
