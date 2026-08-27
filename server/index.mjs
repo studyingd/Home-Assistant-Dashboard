@@ -286,36 +286,47 @@ async function haRest(path, options = {}) {
 async function syncDeviceAutomationLogs(entityId) {
   const end = new Date().toISOString();
   const start = deviceLogSyncState.get(entityId) || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const params = new URLSearchParams({ entity: entityId, end_time: end });
-  const entries = await haRest(`/api/logbook/${encodeURIComponent(start)}?${params.toString()}`);
-  if (!Array.isArray(entries)) return;
-  for (const entry of entries) {
-    const isAutomationEntry = entry?.context_parent_id || entry?.context_domain === 'automation' || entry?.context_event_type === 'automation_triggered';
-    if (entry?.entity_id !== entityId || !isAutomationEntry) continue;
-    const occurredAt = entry.when || entry.timestamp || entry.time;
-    const action = String(entry.message || entry.state || '状态变化').trim().slice(0, 120) || '状态变化';
-    const externalKey = `ha-logbook:${entityId}:${entry.context_id || `${occurredAt || ''}|${action}`}`;
-    await configStore.appendOperationLog({
-      entity_id: entityId,
-      occurred_at: occurredAt,
-      action,
-      source: 'automation',
-      automation_name: typeof entry.context_name === 'string' && entry.context_name.trim()
-        ? entry.context_name.trim().replace(`${AUTOMATION_MARKER} `, '').slice(0, 120)
-        : typeof entry.name === 'string' && entry.name.trim()
-          ? entry.name.trim().replace(`${AUTOMATION_MARKER} `, '').slice(0, 120)
-        : 'Home Assistant 自动化',
-      success: true,
-      external_key: externalKey,
-      metadata: {
-        context_id: entry.context_id ?? null,
-        context_parent_id: entry.context_parent_id ?? null,
-        context_entity_id: entry.context_entity_id ?? null,
-        state: entry.state ?? null,
-      },
-    });
+  const sourceEntities = lightControlEntitiesForLog(entityId);
+  for (const sourceEntity of sourceEntities) {
+    const params = new URLSearchParams({ entity: sourceEntity, end_time: end });
+    const entries = await haRest(`/api/logbook/${encodeURIComponent(start)}?${params.toString()}`);
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      const isAutomationEntry = entry?.context_parent_id || entry?.context_domain === 'automation' || entry?.context_event_type === 'automation_triggered';
+      if (entry?.entity_id !== sourceEntity || !isAutomationEntry) continue;
+      const occurredAt = entry.when || entry.timestamp || entry.time;
+      const action = String(entry.message || entry.state || '状态变化').trim().slice(0, 120) || '状态变化';
+      const externalKey = `ha-logbook:${entityId}:${sourceEntity}:${entry.context_id || `${occurredAt || ''}|${action}`}`;
+      await configStore.appendOperationLog({
+        // 通道日志归并到灯光主体，管理员点击主体卡片即可查看完整记录。
+        entity_id: entityId,
+        occurred_at: occurredAt,
+        action,
+        source: 'automation',
+        automation_name: typeof entry.context_name === 'string' && entry.context_name.trim()
+          ? entry.context_name.trim().replace(`${AUTOMATION_MARKER} `, '').slice(0, 120)
+          : typeof entry.name === 'string' && entry.name.trim()
+            ? entry.name.trim().replace(`${AUTOMATION_MARKER} `, '').slice(0, 120)
+            : 'Home Assistant 自动化',
+        success: true,
+        external_key: externalKey,
+        metadata: {
+          source_entity_id: sourceEntity,
+          context_id: entry.context_id ?? null,
+          context_parent_id: entry.context_parent_id ?? null,
+          context_entity_id: entry.context_entity_id ?? null,
+          state: entry.state ?? null,
+        },
+      });
+    }
   }
   deviceLogSyncState.set(entityId, end);
+}
+
+function lightControlEntitiesForLog(entityId) {
+  if (!/^light\..*_indicator_light(?:_\d+)?$/.test(entityId)) return [entityId];
+  const stem = entityId.slice('light.'.length).replace(/_indicator_light(?:_\d+)?$/, '');
+  return [entityId, ...['_switch', '_left_switch_service', '_middle_switch_service', '_right_switch_service'].map((suffix) => `switch.${stem}${suffix}`)];
 }
 
 const deviceLogSyncState = new Map();

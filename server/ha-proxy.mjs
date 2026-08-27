@@ -76,6 +76,12 @@ function entityIds(value) {
 }
 
 function operationEntities(entityId, allowedEntities) {
+  if (entityId.startsWith('switch.')) {
+    const suffix = entityId.slice('switch.'.length);
+    const match = /^(.+?)(?:_left|_middle|_right)_switch_service$/.exec(suffix) || /^(.+)_switch$/.exec(suffix);
+    const indicator = match ? `light.${match[1]}_indicator_light` : '';
+    if (indicator && allowedEntities.has(indicator)) return [indicator];
+  }
   if (!entityId.startsWith('select.')) return [entityId];
   const suffix = entityId.slice('select.'.length).toLowerCase();
   let best = '';
