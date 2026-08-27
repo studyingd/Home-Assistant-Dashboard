@@ -211,7 +211,7 @@ export async function createConfigStore({ importFile, connectionFile, passwordFi
         const safeConnection = { ...next };
         delete safeConnection.password;
         await atomicJsonWrite(connectionFile, safeConnection);
-        await atomicTextWrite(resolvedPasswordFile, password);
+        await atomicTextWrite(resolvedPasswordFile, next.password);
       }
       const oldPool = pool;
       pool = nextPool;
