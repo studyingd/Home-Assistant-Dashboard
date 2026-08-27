@@ -255,6 +255,7 @@ function publicDashboard(config) {
 }
 
 const AUTOMATION_MARKER = '[Seeed 看板自动化]';
+const AUTOMATION_SCOPE_MARKER = '[scope:dashboard:';
 let managedAutomationCache = { value: [], expiresAt: 0 };
 const managedAutomationIds = new Set();
 
@@ -356,7 +357,8 @@ function parseHaAutomation(config, state, availableEntities = new Set()) {
   const domainMatch = targetIds.length === 1
     ? (/^([a-z_]+)\.\*$/.exec(targetIds[0]) || /^\{\{\s*states\.([a-z_]+)\s*\|/.exec(targetIds[0]) || /states\.(climate|light)\b/.exec(targetIds[0]))
     : null;
-  const domainTarget = Boolean(domainMatch);
+  const scopeMatch = /\[scope:dashboard:(climate|light)\]/.exec(String(config.description || ''));
+  const domainTarget = Boolean(domainMatch || scopeMatch);
   const weekdays = Array.isArray(trigger.weekday) ? trigger.weekday : ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
   const dayMap = new Map([['sun', 0], ['mon', 1], ['tue', 2], ['wed', 3], ['thu', 4], ['fri', 5], ['sat', 6]]);
   const normalizedTargetIds = targetIds.map((id) => {
@@ -369,7 +371,8 @@ function parseHaAutomation(config, state, availableEntities = new Set()) {
     name: String(config.alias).replace(`${AUTOMATION_MARKER} `, ''),
     entity_ids: domainTarget ? [] : normalizedTargetIds,
     target_mode: domainTarget ? 'domain' : 'devices',
-    ...(domainTarget ? { target_domain: domainMatch?.[1] } : {}),
+    ...(domainTarget ? { target_domain: scopeMatch?.[1] || domainMatch?.[1] } : {}),
+    ...(scopeMatch ? { target_scope: 'dashboard' } : {}),
     action: automationAction,
     time: parseHaTime(trigger.at),
     days: weekdays.map((day) => dayMap.get(String(day).slice(0, 3).toLowerCase())).filter((day) => day !== undefined),
@@ -417,10 +420,15 @@ function lightControlEntities(entityId, availableEntities) {
   return candidates.length > 0 ? candidates : [entityId];
 }
 
-function toHaAutomation(automation, availableEntities) {
+function toHaAutomation(automation, availableEntities, dashboardEntities = availableEntities) {
   const weekdays = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const dashboardScope = automation.target_mode === 'domain' && automation.target_scope === 'dashboard';
   const targetIds = automation.target_mode === 'domain'
-    ? automation.entity_ids
+    ? (dashboardScope
+      ? [...new Set([...dashboardEntities]
+        .filter((entityId) => entityId.startsWith(`${automation.target_domain}.`))
+        .flatMap((entityId) => automation.target_domain === 'light' ? lightControlEntities(entityId, availableEntities) : [entityId]))]
+      : automation.entity_ids)
     : automation.entity_ids.flatMap((entityId) => lightControlEntities(entityId, availableEntities));
   const domainTarget = automation.target_domain === 'light'
     ? "{% set ns = namespace(ids=states.light | rejectattr('entity_id', 'search', '_indicator_light(?:_\\d+)?$') | map(attribute='entity_id') | list) %}{% for light in states.light if light.entity_id is search('_indicator_light(?:_\\d+)?$') %}{% set stem = light.entity_id[6:] | regex_replace('_indicator_light(?:_\\d+)?$', '') %}{% set pattern = '^switch\\.' ~ stem ~ '(_switch|_(left|middle|right)_switch_service)$' %}{% set ns.ids = ns.ids + (states.switch | selectattr('entity_id', 'search', pattern) | map(attribute='entity_id') | list) %}{% endfor %}{{ ns.ids | unique | list }}"
@@ -428,10 +436,10 @@ function toHaAutomation(automation, availableEntities) {
   return {
     id: automation.id,
     alias: `${AUTOMATION_MARKER} ${automation.name}`,
-    description: '由 Seeed 办公看板管理',
+    description: `由 Seeed 办公看板管理${dashboardScope ? ` ${AUTOMATION_SCOPE_MARKER}${automation.target_domain}]` : ''}`,
     triggers: [{ trigger: 'time', at: `${automation.time}:00`, weekday: automation.days.map((day) => weekdays[day]) }],
     conditions: [],
-    actions: [{ action: `homeassistant.${automation.action}`, target: { entity_id: automation.target_mode === 'domain' ? domainTarget : targetIds } }],
+    actions: [{ action: `homeassistant.${automation.action}`, target: { entity_id: automation.target_mode === 'domain' && !dashboardScope ? domainTarget : targetIds } }],
     mode: 'single',
     initial_state: automation.enabled !== false,
   };
@@ -453,7 +461,7 @@ async function setHaAutomationState(automation) {
   }
 }
 
-async function writeHaAutomations(automations) {
+async function writeHaAutomations(automations, dashboardEntities = new Set()) {
   const current = await readHaAutomations();
   const availableStates = await haRest('/api/states');
   const availableEntities = new Set(Array.isArray(availableStates) ? availableStates.map((state) => state?.entity_id).filter((id) => typeof id === 'string') : []);
@@ -464,7 +472,7 @@ async function writeHaAutomations(automations) {
     for (const item of automations) {
       await haRest(`/api/config/automation/config/${encodeURIComponent(item.id)}`, {
         method: 'POST',
-        body: JSON.stringify(toHaAutomation(item, availableEntities)),
+        body: JSON.stringify(toHaAutomation(item, availableEntities, dashboardEntities)),
       });
       await setHaAutomationState(item);
     }
@@ -482,7 +490,7 @@ async function writeHaAutomations(automations) {
     await Promise.allSettled([...nextIds].filter((id) => !snapshotIds.has(id)).map((id) => haRest(`/api/config/automation/config/${encodeURIComponent(id)}`, { method: 'DELETE' })));
     await Promise.allSettled(snapshot.map((item) => haRest(`/api/config/automation/config/${encodeURIComponent(item.id)}`, {
       method: 'POST',
-      body: JSON.stringify(toHaAutomation(item, availableEntities)),
+      body: JSON.stringify(toHaAutomation(item, availableEntities, dashboardEntities)),
     }).then(() => setHaAutomationState(item))));
     throw error;
   }
@@ -706,7 +714,7 @@ async function handleApi(req, res, pathname) {
       return;
     }
     try {
-      const saved = await writeHaAutomations(automations);
+      const saved = await writeHaAutomations(automations, allowed);
       audit('automations_updated', { ip, username: sessionFor(req)?.sub, count: automations.length });
       sendJson(res, 200, { automations: saved });
     } catch (error) {
