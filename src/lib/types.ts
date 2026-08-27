@@ -67,8 +67,6 @@ export interface AutomationConfig {
   target_mode?: 'devices' | 'domain';
   /** target_mode 为 domain 时的 HA 域，如 climate、light */
   target_domain?: string;
-  /** 按设备类型时的匹配范围；旧数据缺省按 HA 全部设备处理以保持兼容 */
-  target_scope?: 'dashboard' | 'ha';
   action: 'turn_on' | 'turn_off';
   time: string;
   days: number[];

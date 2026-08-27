@@ -49,7 +49,6 @@ export function validateAutomation(value, allowedEntities) {
   if (!['devices', 'domain'].includes(targetMode)) return false;
   if (targetMode === 'domain') {
     if (!['climate', 'light'].includes(value.target_domain)) return false;
-    if (value.target_scope !== undefined && !['dashboard', 'ha'].includes(value.target_scope)) return false;
   } else {
     if (!Array.isArray(value.entity_ids) || value.entity_ids.length === 0 || value.entity_ids.length > 50) return false;
     if (value.entity_ids.some((entityId) => !validateString(entityId, 255) || !allowedEntities.has(entityId))) return false;

@@ -255,7 +255,6 @@ function publicDashboard(config) {
 }
 
 const AUTOMATION_MARKER = '[Seeed 看板自动化]';
-const AUTOMATION_SCOPE_MARKER = '[scope:dashboard:';
 let managedAutomationCache = { value: [], expiresAt: 0 };
 const managedAutomationIds = new Set();
 
@@ -357,8 +356,7 @@ function parseHaAutomation(config, state, availableEntities = new Set()) {
   const domainMatch = targetIds.length === 1
     ? (/^([a-z_]+)\.\*$/.exec(targetIds[0]) || /^\{\{\s*states\.([a-z_]+)\s*\|/.exec(targetIds[0]) || /states\.(climate|light)\b/.exec(targetIds[0]))
     : null;
-  const scopeMatch = /\[scope:dashboard:(climate|light)\]/.exec(String(config.description || ''));
-  const domainTarget = Boolean(domainMatch || scopeMatch);
+  const domainTarget = Boolean(domainMatch);
   const weekdays = Array.isArray(trigger.weekday) ? trigger.weekday : ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
   const dayMap = new Map([['sun', 0], ['mon', 1], ['tue', 2], ['wed', 3], ['thu', 4], ['fri', 5], ['sat', 6]]);
   const normalizedTargetIds = targetIds.map((id) => {
@@ -371,8 +369,7 @@ function parseHaAutomation(config, state, availableEntities = new Set()) {
     name: String(config.alias).replace(`${AUTOMATION_MARKER} `, ''),
     entity_ids: domainTarget ? [] : normalizedTargetIds,
     target_mode: domainTarget ? 'domain' : 'devices',
-    ...(domainTarget ? { target_domain: scopeMatch?.[1] || domainMatch?.[1] } : {}),
-    ...(scopeMatch ? { target_scope: 'dashboard' } : {}),
+    ...(domainTarget ? { target_domain: domainMatch?.[1] } : {}),
     action: automationAction,
     time: parseHaTime(trigger.at),
     days: weekdays.map((day) => dayMap.get(String(day).slice(0, 3).toLowerCase())).filter((day) => day !== undefined),
@@ -422,24 +419,21 @@ function lightControlEntities(entityId, availableEntities) {
 
 function toHaAutomation(automation, availableEntities, dashboardEntities = availableEntities) {
   const weekdays = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-  const dashboardScope = automation.target_mode === 'domain' && automation.target_scope === 'dashboard';
   const targetIds = automation.target_mode === 'domain'
-    ? (dashboardScope
-      ? [...new Set([...dashboardEntities]
-        .filter((entityId) => entityId.startsWith(`${automation.target_domain}.`))
-        .flatMap((entityId) => automation.target_domain === 'light' ? lightControlEntities(entityId, availableEntities) : [entityId]))]
-      : automation.entity_ids)
+    ? [...new Set([...dashboardEntities]
+      .filter((entityId) => entityId.startsWith(`${automation.target_domain}.`))
+      .flatMap((entityId) => automation.target_domain === 'light' ? lightControlEntities(entityId, availableEntities) : [entityId]))]
     : automation.entity_ids.flatMap((entityId) => lightControlEntities(entityId, availableEntities));
-  const domainTarget = automation.target_domain === 'light'
-    ? "{% set ns = namespace(ids=states.light | rejectattr('entity_id', 'search', '_indicator_light(?:_\\d+)?$') | map(attribute='entity_id') | list) %}{% for light in states.light if light.entity_id is search('_indicator_light(?:_\\d+)?$') %}{% set stem = light.entity_id[6:] | regex_replace('_indicator_light(?:_\\d+)?$', '') %}{% set pattern = '^switch\\.' ~ stem ~ '(_switch|_(left|middle|right)_switch_service)$' %}{% set ns.ids = ns.ids + (states.switch | selectattr('entity_id', 'search', pattern) | map(attribute='entity_id') | list) %}{% endfor %}{{ ns.ids | unique | list }}"
-    : `{{ states.${automation.target_domain} | map(attribute='entity_id') | list }}`;
+  if (targetIds.length === 0) {
+    throw Object.assign(new Error(`当前系统没有可用于自动化的${automation.target_domain === 'light' ? '灯光' : '空调'}设备`), { status: 400 });
+  }
   return {
     id: automation.id,
     alias: `${AUTOMATION_MARKER} ${automation.name}`,
-    description: `由 Seeed 办公看板管理${dashboardScope ? ` ${AUTOMATION_SCOPE_MARKER}${automation.target_domain}]` : ''}`,
+    description: '由 Seeed 办公看板管理（当前系统设备）',
     triggers: [{ trigger: 'time', at: `${automation.time}:00`, weekday: automation.days.map((day) => weekdays[day]) }],
     conditions: [],
-    actions: [{ action: `homeassistant.${automation.action}`, target: { entity_id: automation.target_mode === 'domain' && !dashboardScope ? domainTarget : targetIds } }],
+    actions: [{ action: `homeassistant.${automation.action}`, target: { entity_id: targetIds } }],
     mode: 'single',
     initial_state: automation.enabled !== false,
   };
