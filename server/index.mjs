@@ -359,11 +359,11 @@ function parseHaAutomation(config, state, availableEntities = new Set()) {
   const domainTarget = Boolean(domainMatch);
   const weekdays = Array.isArray(trigger.weekday) ? trigger.weekday : ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
   const dayMap = new Map([['sun', 0], ['mon', 1], ['tue', 2], ['wed', 3], ['thu', 4], ['fri', 5], ['sat', 6]]);
-  const normalizedTargetIds = targetIds.map((id) => {
+  const normalizedTargetIds = [...new Set(targetIds.map((id) => {
     const match = /^switch\.(.+)_(?:left|middle|right)_switch_service$/.exec(id) || /^switch\.(.+)_switch$/.exec(id);
     const indicator = match ? `light.${match[1]}_indicator_light` : '';
     return indicator && availableEntities.has(indicator) ? indicator : id;
-  });
+  }))];
   return {
     id: String(config.id),
     name: String(config.alias).replace(`${AUTOMATION_MARKER} `, ''),
