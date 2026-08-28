@@ -377,13 +377,16 @@ function parseHaAutomation(config, state, availableEntities = new Set()) {
   };
 }
 
-async function readHaAutomations() {
-  if (managedAutomationCache.expiresAt > Date.now()) return managedAutomationCache.value;
+async function readHaAutomations(preferredEntities = null) {
+  // 传入看板实体白名单时需要重新归并灯光主体，不能直接复用未归并的旧缓存。
+  if (!(preferredEntities instanceof Set) && managedAutomationCache.expiresAt > Date.now()) return managedAutomationCache.value;
   const states = await haRest('/api/states');
   const automationStates = Array.isArray(states)
     ? states.filter((item) => String(item?.entity_id || '').startsWith('automation.') && String(item.attributes?.friendly_name || '').startsWith(AUTOMATION_MARKER))
     : [];
-  const availableEntities = new Set(Array.isArray(states) ? states.map((item) => item?.entity_id).filter((id) => typeof id === 'string') : []);
+  const availableEntities = preferredEntities instanceof Set
+    ? preferredEntities
+    : new Set(Array.isArray(states) ? states.map((item) => item?.entity_id).filter((id) => typeof id === 'string') : []);
   const configs = await Promise.all(automationStates.map(async (state) => {
     try {
       return parseHaAutomation(await haRest(`/api/config/automation/config/${encodeURIComponent(state.attributes?.id || '')}`), state, availableEntities);
@@ -456,7 +459,7 @@ async function setHaAutomationState(automation) {
 }
 
 async function writeHaAutomations(automations, dashboardEntities = new Set()) {
-  const current = await readHaAutomations();
+  const current = await readHaAutomations(dashboardEntities);
   const availableStates = await haRest('/api/states');
   const availableEntities = new Set(Array.isArray(availableStates) ? availableStates.map((state) => state?.entity_id).filter((id) => typeof id === 'string') : []);
   const snapshot = current.map((item) => ({ ...item }));
@@ -679,7 +682,8 @@ async function handleApi(req, res, pathname) {
   if (pathname === '/api/automations' && req.method === 'GET') {
     if (!requireAdmin(req, res)) return;
     try {
-      const [automations, existing] = await Promise.all([readHaAutomations(), readHaAutomationSummary()]);
+      const allowed = await allowedEntities(true);
+      const [automations, existing] = await Promise.all([readHaAutomations(allowed), readHaAutomationSummary()]);
       sendJson(res, 200, { automations, existing });
     } catch (error) {
       const status = Number(error?.status) >= 500 ? Number(error.status) : 503;
