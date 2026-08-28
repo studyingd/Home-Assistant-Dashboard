@@ -2,6 +2,8 @@ function validateString(value, max, required = true) {
   return typeof value === 'string' && value.trim().length <= max && (!required || value.trim().length > 0);
 }
 
+const MAX_AUTOMATION_ENTITIES = 2_000;
+
 export function validateDashboard(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   if (value.schemaVersion !== 2 || !validateString(value.title, 100) || !Array.isArray(value.regions)) return false;
@@ -53,7 +55,7 @@ export function validateAutomation(value, allowedEntities) {
   if (targetMode === 'domain') {
     if (!['climate', 'light'].includes(value.target_domain)) return false;
   } else {
-    if (!Array.isArray(value.entity_ids) || value.entity_ids.length === 0 || value.entity_ids.length > 50) return false;
+    if (!Array.isArray(value.entity_ids) || value.entity_ids.length === 0 || value.entity_ids.length > MAX_AUTOMATION_ENTITIES) return false;
     if (value.entity_ids.some((entityId) => !validateString(entityId, 255) || !allowedEntities.has(entityId))) return false;
     if (value.entity_ids.some((entityId) => !['climate', 'switch', 'light'].includes(entityId.split('.')[0]))) return false;
   }

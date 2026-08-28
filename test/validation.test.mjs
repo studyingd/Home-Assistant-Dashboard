@@ -20,4 +20,5 @@ test('validateAutomation only permits supported device domains', () => {
   assert.equal(validateAutomation({ ...base, entity_ids: ['fan.office'] }, new Set(['fan.office'])), false);
   assert.equal(validateAutomation({ ...base, target_mode: 'domain', target_domain: 'input_boolean', entity_ids: [] }, allowed), false);
   assert.equal(validateAutomation({ ...base, target_mode: 'domain', target_domain: 'light', entity_ids: [] }, allowed), true);
+  assert.equal(validateAutomation({ ...base, entity_ids: Array.from({ length: 73 }, (_, i) => `climate.office_${i}`) }, new Set(Array.from({ length: 73 }, (_, i) => `climate.office_${i}`))), true);
 });
