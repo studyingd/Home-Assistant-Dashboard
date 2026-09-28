@@ -45,6 +45,19 @@ function fanLevelLabel(option: string): string {
   return FAN_LEVEL_LABELS[option.trim().toLowerCase()] ?? option;
 }
 
+/**
+ * 当前挡位归一到 fan_modes 中声明的值。
+ * 部分集成(如 lonink LN051)的 fan_modes 是全小写 ["auto","low",…],
+ * 但上报的 fan_mode 首字母大写("High"),严格相等匹配不到会让整排胶囊不高亮。
+ * 优先精确匹配,其次忽略大小写与首尾空白;都不命中时原样返回。
+ */
+function normalizeFanMode(fanModes: string[], value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  if (fanModes.includes(value)) return value;
+  const target = value.trim().toLowerCase();
+  return fanModes.find((mode) => mode.trim().toLowerCase() === target) ?? value;
+}
+
 interface ClimateCardProps {
   config: DeviceConfig;
   entity: HassEntity;
@@ -91,7 +104,7 @@ export const ClimateCard = memo(function ClimateCard({ config, entity }: Climate
     () => findFanSelect(entityId, states, entityDevice).entity,
     [states, entityDevice, entityId],
   );
-  const actualFan = fanSelect?.state ?? (typeof attrs.fan_mode === 'string' ? attrs.fan_mode : null);
+  const actualFan = fanSelect?.state ?? normalizeFanMode(fanModes, attrs.fan_mode);
   useEffect(() => {
     if (pendingFan === null) return undefined;
     if (pendingFan === actualFan) {
@@ -220,7 +233,7 @@ export const ClimateCard = memo(function ClimateCard({ config, entity }: Climate
       ) : fanModes.length > 0 ? (
         <PillSelector
           options={fanModes.map((m) => ({ value: m, label: fanLevelLabel(m) }))}
-          value={unavailable ? null : (pendingFan ?? ((attrs.fan_mode as string) ?? null))}
+          value={unavailable ? null : (pendingFan ?? normalizeFanMode(fanModes, attrs.fan_mode))}
           onSelect={setFanMode}
           disabled={isOff || pendingFan !== null}
         />
