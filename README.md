@@ -24,6 +24,26 @@
 - 配置统一保存在 PostgreSQL；首次初始化数据库时会自动导入 `data/import-config.json`。管理页「设置 → 数据库连接」可测试并切换数据库；凭据仅保存于服务端，不会返回密码。未配置数据库时服务仍会启动并显示管理员配置向导。
 - PostgreSQL 连接参数与密码分开保存：`data/postgres-connection.json` 不包含密码，密码存于受保护的 `data/postgres-connection-password` 文件；数据库结构通过版本化迁移自动升级。
 
+## 项目结构
+
+```text
+server/            Node 安全后端（同源托管前端产物 + API/WS 代理）
+  index.mjs          HTTP/WS 入口、路由、IP 白名单、数据库引导
+  ha-proxy.mjs       HA WebSocket 代理：实体白名单过滤 + 命令白名单
+  security.mjs       管理员认证（scrypt）、会话签名 Cookie、CSRF、Origin 校验
+  validation.mjs     /api/config 写入的配置结构校验
+  db.mjs             PostgreSQL 连接、版本化迁移、看板配置读写
+  hash-password.mjs  生成管理员密码哈希的 CLI（npm run password:hash）
+src/               React 19 + TypeScript 前端
+  components/        看板/管理页组件（cards/ 为各类设备卡片）
+  lib/               配置同步、自动化规则、会话、类型定义等
+  config/            看板默认配置与设备类型定义
+  ha/                home-assistant-js-websocket 连接封装
+test/              node --test 测试：API 白名单行为、配置校验
+secrets/           机密文件（git 忽略，仅保留 .gitkeep）
+data/              非机密运行时数据（git 忽略）
+```
+
 ## 本地开发
 
 生产/预览由 Node 在 `5174` 同时托管前端和安全后端：
@@ -38,6 +58,17 @@ npm run serve
 
 开发环境使用 `data/hass-url.txt` 提供 HA 地址，Token 使用 `secrets/ha-token`；管理员密码和会话密钥分别使用 `secrets/admin-password-hash`、`secrets/session-secret`。
 
+数据库无需手工导出环境变量：非生产模式下若未配置 `PGHOST`，服务会自动尝试用 `secrets/postgres-password` 连接本机 `127.0.0.1:5432` 的 PostgreSQL（如 `docker compose up -d dashboard-postgres` 启动的容器）。
+
+### secrets/ 文件的两种用途
+
+`secrets/` 目录下的文件同时服务于本地开发和 Docker 部署，但读取方式不同：
+
+- **本地开发**：Node 进程直接按默认路径读取 `secrets/ha-token`、`secrets/admin-password-hash`、`secrets/session-secret`、`secrets/postgres-password`。
+- **Docker 部署**：`docker-compose.yml` 的 `secrets:` 段将同一批文件挂载为 Docker secrets，出现在容器内的 `/run/secrets/`（只读内存挂载，不进入镜像层）；服务端通过 `HASS_TOKEN_FILE`、`ADMIN_PASSWORD_HASH_FILE` 等 `*_FILE` 环境变量指向这些路径读取。
+
+因此部署章节创建的 secret 文件与本地开发用的是同一套约定，`secrets/` 整个目录都不应提交到代码仓库或打入备份压缩包。
+
 ## 内网部署
 
 ### 1. 创建 secret 文件
@@ -47,8 +78,11 @@ mkdir -p secrets
 printf '%s' '新的HA长期令牌' > secrets/ha-token
 printf '%s' '足够长的随机会话密钥' > secrets/session-secret
 npm run --silent password:hash -- '至少12位的管理员强密码' > secrets/admin-password-hash
+openssl rand -base64 32 > secrets/postgres-password
 chmod 600 secrets/*
 ```
+
+这四个文件对应 `docker-compose.yml` 中的四个 Docker secrets（`ha_token`、`session_secret`、`admin_password_hash`、`postgres_password`），缺一不可，否则 compose 启动会报 secret 文件不存在。
 
 此前在 `/api/hass`、日志或聊天记录中出现过的旧 HA 令牌必须先在 Home Assistant 中撤销，再创建新的专用令牌。建议使用专门的非管理员 HA 用户生成令牌。
 
@@ -89,6 +123,48 @@ Compose 默认假设 Traefik 已连接名为 `proxy` 的 external Docker 网络�
 员工看板：http://dashboard.seeed.cc/
 管理页面：http://dashboard.seeed.cc/management
 ```
+
+## 环境变量参考
+
+机密类变量均支持两种形式：`*_FILE` 指向文件路径（优先），或直接传值；Docker 部署统一使用 `*_FILE` 指向 `/run/secrets/`。
+
+### 服务与安全
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `PORT` | `5174` | HTTP/WebSocket 监听端口 |
+| `NODE_ENV` | — | `production` 时启用生产校验（必须配置 `ADMIN_USERNAME`、管理员密码哈希等），且不再回退连接本机数据库 |
+| `TRUST_PROXY` | `false` | `true` 时信任反向代理转发的 `X-Forwarded-For/Proto/Host`；位于 Traefik 之后必须开启 |
+| `APP_ORIGIN` | 空 | 浏览器访问看板的预期 Origin（如 `http://dashboard.seeed.cc`），用于同源/CSRF 校验和 Secure Cookie 判定 |
+| `COOKIE_SECURE` | `false` | HTTPS 部署时设为 `true`，为会话 Cookie 添加 Secure 属性 |
+| `ALLOWED_IP_CIDRS` | 空（不限制） | 逗号分隔的 IPv4 CIDR 白名单（如 `10.0.0.0/8,192.168.1.0/24`），限制所有 HTTP/WS 访问来源 |
+| `ADMIN_USERNAME` | `admin` | 管理员登录用户名 |
+| `ADMIN_PASSWORD_HASH` / `ADMIN_PASSWORD_HASH_FILE` | `secrets/admin-password-hash` | 管理员 scrypt 密码哈希 |
+| `SESSION_SECRET` / `SESSION_SECRET_FILE` | `secrets/session-secret` | 会话签名密钥；未配置时每次启动随机生成，重启后所有管理会话失效 |
+| `SESSION_TTL_SECONDS` | `28800`（8 小时） | 管理会话有效期 |
+
+### Home Assistant 连接
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `HASS_URL` / `HASS_URL_FILE` | `data/hass-url.txt` | HA 地址；环境变量优先于文件 |
+| `HASS_TOKEN` / `HASS_TOKEN_FILE` | `secrets/ha-token` | HA 长期令牌；文件优先于环境变量 |
+| `HA_EXTRA_ENTITIES` | 空 | 逗号分隔的额外实体 ID，加入员工连接的允许范围（用于卡片关联的辅助实体） |
+| `ALLOW_INSECURE_HASS` | — | `true` 时允许通过明文 HTTP 连接非内网地址的 HA；默认拒绝 |
+
+### PostgreSQL
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `PGHOST` / `PGPORT` | — / `5432` | 环境级数据库地址；`PGHOST` 与密码同时存在时优先于管理页保存的连接 |
+| `PGDATABASE` / `PGUSER` | `ha_dashboard` | 数据库名与用户 |
+| `PGPASSWORD` / `PGPASSWORD_FILE` | — | 环境级数据库密码 |
+| `PGSSLMODE` | — | `require` 时对数据库连接启用 TLS |
+| `DB_CONNECTION_FILE` | `data/postgres-connection.json` | 管理页「设置 → 数据库连接」保存的连接参数（不含密码） |
+| `DB_PASSWORD_FILE` | `data/postgres-connection-password` | 上述连接的密码文件 |
+| `CONFIG_IMPORT_FILE` | `data/import-config.json` | 首次初始化空数据库时自动导入的看板配置 |
+
+数据库连接优先级：管理页保存的连接（`DB_CONNECTION_FILE`）→ 环境级 `PGHOST`/密码 → 非生产模式下用 `secrets/postgres-password` 连接本机 `127.0.0.1:5432` → 均未配置时进入管理员配置向导。
 
 ## Traefik 要求
 
