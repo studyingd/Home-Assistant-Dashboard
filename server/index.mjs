@@ -13,6 +13,9 @@ import { gzipSync } from 'node:zlib';
 import { createHaProxy } from './ha-proxy.mjs';
 import { createConfigStore } from './db.mjs';
 import { validateAutomation, validateDashboard } from './validation.mjs';
+import { AUTOMATION_MARKER, parseHaAutomation, toHaAutomation } from './automations.mjs';
+import { createHealthService } from './health.mjs';
+import { lightMainStem, panelControlEntityIds } from '../shared/switch-panels.mjs';
 import {
   SlidingWindowLimiter,
   clearSessionCookie,
@@ -43,6 +46,20 @@ const HA_REQUEST_TIMEOUT_MS = 10_000;
 const GZIP_EXTS = new Set(['.html', '.js', '.css', '.json', '.svg', '.map']);
 const security = await loadSecurityConfig();
 const configStore = await createConfigStore({ importFile: IMPORT_FILE, connectionFile: DB_CONNECTION_FILE, passwordFile: DB_PASSWORD_FILE });
+const healthService = createHealthService(configStore, haRest);
+
+// 操作日志保留 90 天:启动时清一次,此后每 24 小时清一次(unref:不阻塞测试进程退出)
+const LOG_RETENTION_DAYS = 90;
+async function pruneLogs() {
+  try {
+    const removed = await configStore.pruneOperationLogs(LOG_RETENTION_DAYS);
+    if (removed > 0) console.log(`[ha-dashboard] 已清理 ${removed} 条过期操作日志(超过 ${LOG_RETENTION_DAYS} 天)`);
+  } catch (error) {
+    console.warn('[ha-dashboard] 操作日志清理失败:', error?.message || error);
+  }
+}
+void pruneLogs();
+setInterval(() => { void pruneLogs(); }, 24 * 60 * 60_000).unref();
 const hassUrlFromFile = await readFile(HASS_URL_FILE, 'utf8').then((value) => value.trim()).catch(() => '');
 function validCidr(cidr) {
   const [network, prefixText] = cidr.split('/');
@@ -254,7 +271,6 @@ function publicDashboard(config) {
   };
 }
 
-const AUTOMATION_MARKER = '[Seeed 看板自动化]';
 let managedAutomationCache = { value: [], expiresAt: 0 };
 const managedAutomationIds = new Set();
 
@@ -324,9 +340,8 @@ async function syncDeviceAutomationLogs(entityId) {
 }
 
 function lightControlEntitiesForLog(entityId) {
-  if (!/^light\..*_indicator_light(?:_\d+)?$/.test(entityId)) return [entityId];
-  const stem = entityId.slice('light.'.length).replace(/_indicator_light(?:_\d+)?$/, '');
-  return [entityId, ...['_switch', '_left_switch_service', '_middle_switch_service', '_right_switch_service'].map((suffix) => `switch.${stem}${suffix}`)];
+  const stem = lightMainStem(entityId);
+  return stem ? [entityId, ...panelControlEntityIds(stem)] : [entityId];
 }
 
 const deviceLogSyncState = new Map();
@@ -338,43 +353,6 @@ function syncDeviceAutomationLogsOnce(entityId) {
   const task = syncDeviceAutomationLogs(entityId).finally(() => deviceLogSyncInFlight.delete(entityId));
   deviceLogSyncInFlight.set(entityId, task);
   return task;
-}
-
-function parseHaTime(value) {
-  const match = /^(\d{2}):(\d{2})(?::\d{2})?$/.exec(String(value || ''));
-  return match ? `${match[1]}:${match[2]}` : null;
-}
-
-function parseHaAutomation(config, state, availableEntities = new Set()) {
-  if (!config || typeof config !== 'object' || !String(config.alias || '').startsWith(AUTOMATION_MARKER)) return null;
-  const trigger = Array.isArray(config.triggers) ? config.triggers.find((item) => item?.trigger === 'time' && parseHaTime(item.at)) : null;
-  const action = Array.isArray(config.actions) ? config.actions[0] : null;
-  const service = String(action?.action || '');
-  const targetIds = Array.isArray(action?.target?.entity_id) ? action.target.entity_id : [action?.target?.entity_id];
-  const automationAction = service === 'homeassistant.turn_off' ? 'turn_off' : service === 'homeassistant.turn_on' ? 'turn_on' : null;
-  if (!trigger || !automationAction || targetIds.some((entity) => typeof entity !== 'string')) return null;
-  const domainMatch = targetIds.length === 1
-    ? (/^([a-z_]+)\.\*$/.exec(targetIds[0]) || /^\{\{\s*states\.([a-z_]+)\s*\|/.exec(targetIds[0]) || /states\.(climate|light)\b/.exec(targetIds[0]))
-    : null;
-  const domainTarget = Boolean(domainMatch);
-  const weekdays = Array.isArray(trigger.weekday) ? trigger.weekday : ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-  const dayMap = new Map([['sun', 0], ['mon', 1], ['tue', 2], ['wed', 3], ['thu', 4], ['fri', 5], ['sat', 6]]);
-  const normalizedTargetIds = [...new Set(targetIds.map((id) => {
-    const match = /^switch\.(.+)_(?:left|middle|right)_switch_service$/.exec(id) || /^switch\.(.+)_switch$/.exec(id);
-    const indicator = match ? `light.${match[1]}_indicator_light` : '';
-    return indicator && availableEntities.has(indicator) ? indicator : id;
-  }))];
-  return {
-    id: String(config.id),
-    name: String(config.alias).replace(`${AUTOMATION_MARKER} `, ''),
-    entity_ids: domainTarget ? [] : normalizedTargetIds,
-    target_mode: domainTarget ? 'domain' : 'devices',
-    ...(domainTarget ? { target_domain: domainMatch?.[1] } : {}),
-    action: automationAction,
-    time: parseHaTime(trigger.at),
-    days: weekdays.map((day) => dayMap.get(String(day).slice(0, 3).toLowerCase())).filter((day) => day !== undefined),
-    enabled: state?.state !== 'off',
-  };
 }
 
 async function readHaAutomations(preferredEntities = null) {
@@ -409,37 +387,6 @@ async function readHaAutomationSummary() {
       enabled: item.state !== 'off',
     })).filter((item) => item.id)
     : [];
-}
-
-function lightControlEntities(entityId, availableEntities) {
-  if (!/^light\..*_indicator_light(?:_\d+)?$/.test(entityId)) return [entityId];
-  const stem = entityId.slice('light.'.length).replace(/_indicator_light(?:_\d+)?$/, '');
-  const candidates = ['_switch', '_left_switch_service', '_middle_switch_service', '_right_switch_service']
-    .map((suffix) => `switch.${stem}${suffix}`)
-    .filter((id) => !availableEntities || availableEntities.has(id));
-  return candidates.length > 0 ? candidates : [entityId];
-}
-
-function toHaAutomation(automation, availableEntities, dashboardEntities = availableEntities) {
-  const weekdays = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-  const targetIds = automation.target_mode === 'domain'
-    ? [...new Set([...dashboardEntities]
-      .filter((entityId) => entityId.startsWith(`${automation.target_domain}.`))
-      .flatMap((entityId) => automation.target_domain === 'light' ? lightControlEntities(entityId, availableEntities) : [entityId]))]
-    : automation.entity_ids.flatMap((entityId) => lightControlEntities(entityId, availableEntities));
-  if (targetIds.length === 0) {
-    throw Object.assign(new Error(`当前系统没有可用于自动化的${automation.target_domain === 'light' ? '灯光' : '空调'}设备`), { status: 400 });
-  }
-  return {
-    id: automation.id,
-    alias: `${AUTOMATION_MARKER} ${automation.name}`,
-    description: '由 Seeed 办公看板管理（当前系统设备）',
-    triggers: [{ trigger: 'time', at: `${automation.time}:00`, weekday: automation.days.map((day) => weekdays[day]) }],
-    conditions: [],
-    actions: [{ action: `homeassistant.${automation.action}`, target: { entity_id: targetIds } }],
-    mode: 'single',
-    initial_state: automation.enabled !== false,
-  };
 }
 
 async function setHaAutomationState(automation) {
@@ -501,6 +448,7 @@ async function writeHaAutomations(automations, dashboardEntities = new Set()) {
   return saved;
 }
 
+/** 配置体检:遍历看板配置设备,对照 HA 实时状态标记 missing(实体不存在)/unavailable(不可用) */
 async function allowedEntities(admin = false) {
   const config = await configStore.readConfig();
   const ids = new Set();
@@ -513,11 +461,11 @@ async function allowedEntities(admin = false) {
           ids.add(device.entity_id);
           // 灯光主体使用 HA 的 indicator_light 实体承载整组设备；同时放行对应的真实 switch 通道，
           // 供前端在主体卡片内反馈并控制每一路，而不会把通道拆成额外卡片。
-          if (device.entity_id.startsWith('light.') && /_indicator_light(?:_\d+)?$/.test(device.entity_id)) {
-            const stem = device.entity_id.slice('light.'.length).replace(/_indicator_light(?:_\d+)?$/, '');
-            for (const suffix of ['_switch', '_left_switch_service', '_middle_switch_service', '_right_switch_service']) {
-              ids.add(`switch.${stem}${suffix}`);
-            }
+          // 灯光主体承载整组设备(旧版 _indicator_light / 新版 _all_switch 等,规则见 shared/switch-panels.mjs);
+          // 同时放行对应的真实 switch 通道,供前端在主体卡片内反馈并控制每一路。
+          const panelStem = lightMainStem(device.entity_id);
+          if (panelStem) {
+            for (const channelId of panelControlEntityIds(panelStem)) ids.add(channelId);
           }
         }
       }
@@ -565,6 +513,32 @@ async function handleApi(req, res, pathname) {
   if (pathname === '/api/database' && req.method === 'GET') {
     if (!requireAdmin(req, res)) return;
     sendJson(res, 200, configStore.getConnectionStatus());
+    return;
+  }
+
+  // 配置体检:核对看板配置的设备实体在 HA 中的存在性,标记已失效/不可用的卡片
+  if (pathname === '/api/config/health' && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return;
+    try {
+      sendJson(res, 200, await healthService.buildDeviceHealth());
+    } catch (error) {
+      const status = Number(error?.status) || 503;
+      sendJson(res, status, { error: error instanceof Error ? error.message : 'health_check_failed' });
+    }
+    return;
+  }
+
+  // 体检摘要(读缓存):管理页角标用;缓存缺失/过期时后台补跑一次
+  if (pathname === '/api/config/health/summary' && req.method === 'GET') {
+    if (!requireAdmin(req, res)) return;
+    await healthService.ensureDeviceHealth();
+    const report = healthService.getReport();
+    if (!report) {
+      sendJson(res, 503, { error: 'health_check_failed' });
+      return;
+    }
+    const missingCount = report.problems.filter((problem) => problem.status === 'missing').length;
+    sendJson(res, 200, { checkedAt: report.checkedAt, total: report.total, problemCount: report.problems.length, missingCount, unavailableCount: report.problems.length - missingCount });
     return;
   }
 
@@ -865,6 +839,10 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(PORT, () => {
   console.log(`[ha-dashboard] 监听 :${PORT}，PostgreSQL 配置存储已启用`);
 });
+
+// 启动后延迟首检 + 每 30 分钟定时体检(unref:不阻塞测试进程退出)
+setInterval(() => { void healthService.ensureDeviceHealth(0); }, 30 * 60_000).unref();
+setTimeout(() => { void healthService.ensureDeviceHealth(0); }, 20_000).unref();
 
 server.requestTimeout = 15_000;
 server.headersTimeout = 10_000;

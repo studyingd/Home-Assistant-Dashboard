@@ -285,6 +285,15 @@ export async function createConfigStore({ importFile, connectionFile, passwordFi
       if (!pool) return;
       await appendOperationLogWithPool(pool, entry);
     },
+    /** 清理保留期之前的操作日志,返回删除行数(未配置数据库时返回 0) */
+    pruneOperationLogs: async (retentionDays = 90) => {
+      if (!pool) return 0;
+      const result = await pool.query(
+        'DELETE FROM dashboard_operation_logs WHERE occurred_at < now() - ($1::text || \' days\')::interval',
+        [String(retentionDays)],
+      );
+      return result.rowCount ?? 0;
+    },
     readOperationLogs: async (entityId, limit = 200) => {
       if (!pool) throw Object.assign(new Error('PostgreSQL 尚未配置'), { code: 'DB_NOT_CONFIGURED' });
       const result = await pool.query(

@@ -1,18 +1,20 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import type { DeviceConfig, Region, RegionBlock } from '../lib/types';
 import { countRegionDevices } from '../lib/regions';
 import { useHass } from '../ha/useHass';
 import { useDashboardConfig } from '../hooks/useDashboardConfig';
 import { Header } from './Header';
 import { RegionView } from './RegionView';
-import { SettingsDialog } from './SettingsDialog';
 import { NameIconDialog } from './NameIconDialog';
 import { DeviceEditDialog } from './DeviceEditDialog';
-import { DevicePickerDialog } from './DevicePickerDialog';
 import { ConfirmDialog } from './ConfirmDialog';
-import { AutomationDialog } from './AutomationDialog';
-import { DeviceLogsDialog } from './DeviceLogsDialog';
 import { Icon } from '../icons';
+
+// 低频重组件懒加载:首屏只拉看板骨架,打开对应弹窗时再加载分块(Vite 自动分包)
+const SettingsDialog = lazy(() => import('./SettingsDialog').then((m) => ({ default: m.SettingsDialog })));
+const DevicePickerDialog = lazy(() => import('./DevicePickerDialog').then((m) => ({ default: m.DevicePickerDialog })));
+const AutomationDialog = lazy(() => import('./AutomationDialog').then((m) => ({ default: m.AutomationDialog })));
+const DeviceLogsDialog = lazy(() => import('./DeviceLogsDialog').then((m) => ({ default: m.DeviceLogsDialog })));
 
 interface DashboardProps {
   /** 只读模式(用户页):禁用全部编辑/设置入口,仅保留设备控制 */
@@ -78,7 +80,9 @@ export function Dashboard({ readOnly = false, onLogoutAdmin }: DashboardProps) {
             </div>
           </div>
         </div>
-        {dialog?.kind === 'settings' && <SettingsDialog onClose={closeDialog} onDatabaseUpdated={() => { closeDialog(); retrySync(); }} />}
+        <Suspense fallback={null}>
+          {dialog?.kind === 'settings' && <SettingsDialog onClose={closeDialog} onDatabaseUpdated={() => { closeDialog(); retrySync(); }} />}
+        </Suspense>
       </>
     );
   }
@@ -166,13 +170,15 @@ export function Dashboard({ readOnly = false, onLogoutAdmin }: DashboardProps) {
         />
       </main>
 
-      {dialog?.kind === 'settings' && (
-        <SettingsDialog onClose={closeDialog} onDatabaseUpdated={retrySync} />
-      )}
+      <Suspense fallback={null}>
+        {dialog?.kind === 'settings' && (
+          <SettingsDialog onClose={closeDialog} onDatabaseUpdated={retrySync} />
+        )}
 
-      {dialog?.kind === 'automations' && (
-        <AutomationDialog onClose={closeDialog} />
-      )}
+        {dialog?.kind === 'automations' && (
+          <AutomationDialog onClose={closeDialog} />
+        )}
+      </Suspense>
 
       {dialog?.kind === 'create-region' && (
         <NameIconDialog
@@ -289,17 +295,19 @@ export function Dashboard({ readOnly = false, onLogoutAdmin }: DashboardProps) {
         />
       )}
 
-      {dialog?.kind === 'device-logs' && (
-        <DeviceLogsDialog
-          entityId={dialog.device.entity_id}
-          deviceName={dialog.device.name ?? dialog.device.entity_id}
-          onClose={closeDialog}
-        />
-      )}
+      <Suspense fallback={null}>
+        {dialog?.kind === 'device-logs' && (
+          <DeviceLogsDialog
+            entityId={dialog.device.entity_id}
+            deviceName={dialog.device.name ?? dialog.device.entity_id}
+            onClose={closeDialog}
+          />
+        )}
 
-      {dialog?.kind === 'picker' && (
-        <DevicePickerDialog block={dialog.block} onClose={closeDialog} />
-      )}
+        {dialog?.kind === 'picker' && (
+          <DevicePickerDialog block={dialog.block} onClose={closeDialog} />
+        )}
+      </Suspense>
     </>
   );
 }

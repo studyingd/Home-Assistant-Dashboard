@@ -1,25 +1,13 @@
 import { memo, useEffect, useMemo, useState } from 'react';
-import type { HassEntities, HassEntity } from 'home-assistant-js-websocket';
+import type { HassEntity } from 'home-assistant-js-websocket';
 import type { DeviceConfig } from '../../lib/types';
+import { panelChannelsForMain } from '../../lib/panelDevice';
 import { useHass } from '../../ha/useHass';
 import { CardShell } from '../ui/CardShell';
 import { IconButton } from '../ui/IconButton';
 import { Icon } from '../../icons';
 
 interface LightCardProps { config: DeviceConfig; entity: HassEntity; }
-
-function findSwitchChannels(entityId: string, states: HassEntities | null): HassEntity[] {
-  if (!states || !entityId.startsWith('light.')) return [];
-  const stem = entityId.slice('light.'.length).replace(/_indicator_light(?:_\d+)?$/, '');
-  if (!stem) return [];
-  const ids = [
-    `${stem}_left_switch_service`,
-    `${stem}_middle_switch_service`,
-    `${stem}_right_switch_service`,
-    `${stem}_switch`,
-  ].map((value) => `switch.${value}`);
-  return ids.map((id) => states[id]).filter((value): value is HassEntity => Boolean(value));
-}
 
 function channelLabel(entity: HassEntity, index: number): string {
   const name = String(entity.attributes?.friendly_name ?? '');
@@ -30,10 +18,11 @@ function channelLabel(entity: HassEntity, index: number): string {
 }
 
 export const LightCard = memo(function LightCard({ config, entity }: LightCardProps) {
-  const { callService, states } = useHass();
+  const { callService, states, entityDevice } = useHass();
   const entityId = entity.entity_id;
   const attrs = entity.attributes as Record<string, unknown>;
-  const channels = useMemo(() => findSwitchChannels(entityId, states), [entityId, states]);
+  // 通道解析:device_id 同设备聚合优先,注册表不可用时回退词干规则(见 lib/panelDevice.ts)
+  const channels = useMemo(() => panelChannelsForMain(entityId, states, entityDevice), [entityId, states, entityDevice]);
   const hasChannels = channels.length > 0;
   const unavailable = hasChannels
     ? channels.every((channel) => channel.state === 'unavailable' || channel.state === 'unknown')

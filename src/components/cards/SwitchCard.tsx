@@ -43,7 +43,7 @@ export const SwitchCard = memo(function SwitchCard({ config, entity }: SwitchCar
   return (
     <CardShell
       name={name}
-      icon={config.icon ?? 'power'}
+      icon={config.icon ?? 'lightbulb'}
       className="switch-card"
       iconOn={isOn && !unavailable}
       unavailable={unavailable}
@@ -60,9 +60,7 @@ export const SwitchCard = memo(function SwitchCard({ config, entity }: SwitchCar
     >
       <div className="switch-card__state">
         <strong>{unavailable ? '不可用' : isOn ? '已开启' : '已关闭'}</strong>
-        <span>灯光开关</span>
       </div>
-      <div className="card__sub">{entityId}</div>
     </CardShell>
   );
 });

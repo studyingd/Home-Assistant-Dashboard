@@ -22,7 +22,8 @@
 - 管理页 `/management` 登录后可以编辑区域、设备和布局。
 - 管理员可在管理页创建和维护设备定时开关规则；规则通过 Home Assistant 原生配置 API 保存并由 HA 执行，员工页不可见。
 - 配置统一保存在 PostgreSQL；首次初始化数据库时会自动导入 `data/import-config.json`。管理页「设置 → 数据库连接」可测试并切换数据库；凭据仅保存于服务端，不会返回密码。未配置数据库时服务仍会启动并显示管理员配置向导。
-- PostgreSQL 连接参数与密码分开保存：`data/postgres-connection.json` 不包含密码，密码存于受保护的 `data/postgres-connection-password` 文件；数据库结构通过版本化迁移自动升级。
+- 多键开关面板（小米 W1/W2/W3 等）在设备选择器中自动聚合为一条「整组」入口，卡片内可分路控制；识别规则前后端共用，且优先按 HA 设备注册表（device_id）聚合，实体改名不断链。
+- 管理页「设置 → 设备健康检查」可核对配置设备在 HA 中的存在性：已消失实体的卡片支持两段确认一键移除；服务端启动后自动体检并每 30 分钟刷新一次，管理页齿轮按钮以红色角标提示异常设备数。
 
 ## 项目结构
 
@@ -32,21 +33,57 @@ server/            Node 安全后端（同源托管前端产物 + API/WS 代理�
   ha-proxy.mjs       HA WebSocket 代理：实体白名单过滤 + 命令白名单
   security.mjs       管理员认证（scrypt）、会话签名 Cookie、CSRF、Origin 校验
   validation.mjs     /api/config 写入的配置结构校验
-  db.mjs             PostgreSQL 连接、版本化迁移、看板配置读写
+  automations.mjs    托管自动化的纯逻辑互转（HA 配置 ↔ 看板模型、通道展开）
+  health.mjs         设备健康检查服务（配置实体 ↔ HA 状态核对 + 定时缓存）
+  db.mjs             PostgreSQL 连接、版本化迁移、看板配置读写、操作日志（保留 90 天）
   hash-password.mjs  生成管理员密码哈希的 CLI（npm run password:hash）
+shared/            前后端共用的纯逻辑（多键开关面板实体识别规则，无运行时依赖）
 src/               React 19 + TypeScript 前端
   components/        看板/管理页组件（cards/ 为各类设备卡片）
   lib/               配置同步、自动化规则、会话、类型定义等
   config/            看板默认配置与设备类型定义
   ha/                home-assistant-js-websocket 连接封装
-test/              node --test 测试：API 白名单行为、配置校验
+test/              node --test 测试：API 白名单、配置校验、面板识别规则、自动化互转、健康检查
 secrets/           机密文件（git 忽略，仅保留 .gitkeep）
 data/              非机密运行时数据（git 忽略）
 ```
 
-## 本地开发
+## 本地启动（不使用 Docker）
 
-生产/预览由 Node 在 `5174` 同时托管前端和安全后端：
+不使用 Docker 时可以直接用 Node 运行完整服务：`npm run serve` 会在 `5174` 端口同时托管前端构建产物和安全后端（同源 HTTP/WS），业务行为与容器运行一致，只是非 root、只读根文件系统等容器加固需由宿主机环境自行保障。
+
+### 前置条件
+
+- Node.js 22（与 `Dockerfile` 使用的 `node:22` 保持一致）。
+- 可选：本机 PostgreSQL（`127.0.0.1:5432`），例如 `docker compose up -d dashboard-postgres` 启动的容器；未配置数据库时服务仍会启动并显示管理员配置向导。
+
+### 1. 创建 secret 文件
+
+本地运行时 Node 进程按默认路径直接读取 `secrets/` 下的文件。以下命令在 bash / Git Bash / WSL 中执行（Windows 下也可以用文本编辑器直接创建同名文件）：
+
+```bash
+mkdir -p secrets
+printf '%s' '你的HA长期令牌' > secrets/ha-token
+printf '%s' '足够长的随机会话密钥' > secrets/session-secret
+npm run --silent password:hash -- '至少12位的管理员强密码' > secrets/admin-password-hash
+openssl rand -base64 32 > secrets/postgres-password
+chmod 600 secrets/*
+```
+
+- `secrets/postgres-password` 只在启用本机 PostgreSQL 自动连接时需要，不使用数据库可先跳过。
+- `secrets/session-secret` 未提供时服务只会告警，但每次重启后所有管理会话失效。
+
+### 2. 配置 HA 地址
+
+将 Home Assistant 地址写入 `data/hass-url.txt`（目录不存在时先创建），例如：
+
+```text
+http://homeassistant.local:8123
+```
+
+若 HA 使用非内网地址的明文 HTTP，需要设置 `ALLOW_INSECURE_HASS=true`（详见「环境变量参考」）。
+
+### 3. 安装依赖并启动
 
 ```bash
 npm install
@@ -54,11 +91,20 @@ npm run build
 npm run serve
 ```
 
-`npm run dev` 启动 Vite 开发服务器（默认 5173），并将 `/api` 与 WebSocket 代理到 5174；完整同源运行请使用 `npm run serve`。
+访问地址：
 
-开发环境使用 `data/hass-url.txt` 提供 HA 地址，Token 使用 `secrets/ha-token`；管理员密码和会话密钥分别使用 `secrets/admin-password-hash`、`secrets/session-secret`。
+```text
+员工看板：http://localhost:5174/
+管理页面：http://localhost:5174/management
+```
 
-数据库无需手工导出环境变量：非生产模式下若未配置 `PGHOST`，服务会自动尝试用 `secrets/postgres-password` 连接本机 `127.0.0.1:5432` 的 PostgreSQL（如 `docker compose up -d dashboard-postgres` 启动的容器）。
+### 开发模式
+
+日常开发可改用 `npm run dev`：启动 Vite 开发服务器（默认 5173，支持热更新），并把 `/api` 与 WebSocket 代理到 5174，需要另开一个终端先运行 `npm run serve`。完整同源运行（前端构建产物由 Node 托管）请使用 `npm run build && npm run serve`。
+
+### 数据库
+
+数据库无需手工导出环境变量：非生产模式下若未配置 `PGHOST`，服务会自动尝试用 `secrets/postgres-password` 连接本机 `127.0.0.1:5432` 的 PostgreSQL（如 `docker compose up -d dashboard-postgres` 启动的容器）。配置统一保存在 PostgreSQL，首次初始化数据库时会自动导入 `data/import-config.json`；管理页「设置 → 数据库连接」可测试并切换数据库，凭据仅保存于服务端，不会返回密码。
 
 ### secrets/ 文件的两种用途
 
@@ -69,9 +115,11 @@ npm run serve
 
 因此部署章节创建的 secret 文件与本地开发用的是同一套约定，`secrets/` 整个目录都不应提交到代码仓库或打入备份压缩包。
 
-## 内网部署
+## 内网部署（Docker）
 
 ### 1. 创建 secret 文件
+
+与「本地启动」第 1 步使用同一批 secret 文件，在部署机上执行相同的命令创建：
 
 ```bash
 mkdir -p secrets
@@ -189,6 +237,7 @@ Compose 默认假设 Traefik 已连接名为 `proxy` 的 external Docker 网络�
 ## 数据与备份
 
 - 共享看板布局：PostgreSQL（Docker Compose 默认）。`data/import-config.json` 仅用于首次数据库初始化导入；浏览器不再作为业务配置存储。
+- 设备操作日志：PostgreSQL `dashboard_operation_logs` 表，服务端启动时及每日自动清理超过 90 天的记录。
 - Home Assistant 自动化配置存储：管理员创建的看板自动化规则（带有 `[Seeed 看板自动化]` 标记）。
 - `secrets/ha-token`：HA 长期令牌，只读挂载。
 - `secrets/admin-password-hash`：管理员 scrypt 密码哈希。

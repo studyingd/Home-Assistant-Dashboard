@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react';
 import { DASHBOARD_TITLE } from '../config/dashboard';
 import type { Region } from '../lib/types';
+import { fetchDeviceHealthSummary } from '../lib/health';
 import { RegionNav } from './RegionNav';
 import { ConnectionStatus } from './ConnectionStatus';
 import { IconButton } from './ui/IconButton';
@@ -38,6 +40,17 @@ export function Header({
   onLogoutAdmin,
 }: HeaderProps) {
   const firstRegionId = regions[0]?.id;
+  // 管理页齿轮角标:后台定时体检的异常设备数(仅管理员;接口失败静默降级为无角标)
+  const [healthProblems, setHealthProblems] = useState(0);
+  useEffect(() => {
+    if (readOnly) return undefined;
+    let cancelled = false;
+    const load = () => { void fetchDeviceHealthSummary().then((summary) => { if (!cancelled && summary) setHealthProblems(summary.problemCount); }); };
+    load();
+    const timer = window.setInterval(load, 5 * 60_000);
+    window.addEventListener('ha:health-refresh', load);
+    return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener('ha:health-refresh', load); };
+  }, [readOnly]);
 
   return (
     <header className="app-header">
@@ -74,7 +87,10 @@ export function Header({
                 onClick={onToggleEdit}
               />
               <IconButton icon="clock" label="定时自动化" onClick={onOpenAutomations} />
-              <IconButton icon="gear" label="设置" onClick={onOpenSettings} />
+              <span className="header-icon-badge">
+                <IconButton icon="gear" label={healthProblems > 0 ? `设置（${healthProblems} 个设备异常）` : '设置'} onClick={onOpenSettings} />
+                {healthProblems > 0 && <span className="header-icon-badge__dot" aria-hidden="true">{healthProblems > 99 ? '99+' : healthProblems}</span>}
+              </span>
             </>
           )}
           {onLogoutAdmin && (

@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { WebSocket, WebSocketServer } from 'ws';
+import { lightMainEntityCandidates, panelChannelStem } from '../shared/switch-panels.mjs';
 
 const SAFE_SERVICES = new Map([
   ['climate.set_temperature', new Set(['entity_id', 'temperature'])],
@@ -77,10 +78,13 @@ function entityIds(value) {
 
 function operationEntities(entityId, allowedEntities) {
   if (entityId.startsWith('switch.')) {
-    const suffix = entityId.slice('switch.'.length);
-    const match = /^(.+?)(?:_left|_middle|_right)_switch_service$/.exec(suffix) || /^(.+)_switch$/.exec(suffix);
-    const indicator = match ? `light.${match[1]}_indicator_light` : '';
-    if (indicator && allowedEntities.has(indicator)) return [indicator];
+    const single = /^switch\.(.+)_switch$/.exec(entityId);
+    const stem = panelChannelStem(entityId) ?? (single ? single[1] : null);
+    if (stem) {
+      // 通道操作归属到整组灯光卡片主体(兼容新旧命名,规则见 shared/switch-panels.mjs)
+      const parent = lightMainEntityCandidates(stem).find((candidate) => allowedEntities.has(candidate));
+      if (parent) return [parent];
+    }
   }
   if (!entityId.startsWith('select.')) return [entityId];
   const suffix = entityId.slice('select.'.length).toLowerCase();

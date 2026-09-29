@@ -1,8 +1,9 @@
 /**
  * 设备编辑弹窗:设置/清除单个设备的自定义名与自定义图标。
- * 名称留空 → 恢复跟随 HA 的 friendly_name;图标选「自动」 → 恢复按类型/属性自动选择。
+ * 打开时预填当前生效名称(自定义名或 HA 的 friendly_name),便于在原名基础上修改;
+ * 清空并保存 → 恢复跟随 HA 的 friendly_name;图标选「自动」 → 恢复按类型/属性自动选择。
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { IconName } from '../icons';
 import { Icon } from '../icons';
 import { useEntityState } from '../ha/useEntityState';
@@ -20,6 +21,7 @@ const ICON_CHOICES: IconName[] = [
   'sun',
   'moon',
   'power',
+  'lightbulb',
   'curtain',
   'window',
   'door',
@@ -55,10 +57,21 @@ export function DeviceEditDialog({
   const entity = useEntityState(entityId);
   const haName = (entity?.attributes?.friendly_name as string | undefined) ?? entityId;
   const [name, setName] = useState(initialName);
+  const [touched, setTouched] = useState(false);
   const [icon, setIcon] = useState<string | undefined>(initialIcon);
   const [hiddenFromUsers, setHiddenFromUsers] = useState(initialHiddenFromUsers);
 
-  const submit = () => onSubmit(name.trim(), icon, hiddenFromUsers);
+  // 无自定义名时,用 HA 当前名称预填输入框,便于在原名基础上修改而不是重新输入
+  useEffect(() => {
+    if (!touched && !initialName && haName) setName(haName);
+  }, [touched, initialName, haName]);
+
+  const submit = () => {
+    const trimmed = name.trim();
+    // 打开时无自定义名且未改动预填名 → 保持「跟随 HA」语义,提交空串清除
+    const finalName = !initialName && !touched && trimmed === haName ? '' : trimmed;
+    onSubmit(finalName, icon, hiddenFromUsers);
+  };
 
   return (
     <Dialog
@@ -83,12 +96,15 @@ export function DeviceEditDialog({
             value={name}
             autoFocus
             placeholder={haName}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              setName(e.target.value);
+              setTouched(true);
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') submit();
             }}
           />
-          <p className="field__hint">留空则跟随 Home Assistant 名称(当前:{haName})</p>
+          <p className="field__hint">清空并保存则恢复跟随 Home Assistant 名称(当前:{haName})</p>
         </div>
         <label className="visibility-toggle"><input type="checkbox" checked={hiddenFromUsers} onChange={(e) => setHiddenFromUsers(e.target.checked)} />仅管理员可见<span>普通用户页面将隐藏此设备</span></label>
         <div className="field">
