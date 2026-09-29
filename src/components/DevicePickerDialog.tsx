@@ -128,19 +128,19 @@ export function DevicePickerDialog({ block, onClose }: DevicePickerDialogProps) 
   const [filter, setFilter] = useState<DomainFilter>('all');
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // 当前区块已添加的实体:仍禁止在同一区块内重复;其它区块的重复改为提示而非禁止
-  const blockExisting = useMemo(
-    () => new Set(block.devices.map((device) => device.entity_id)),
-    [block.devices],
-  );
-  // 设备在其它区块的分布(「已在某区块」提示)
-  const entityLocations = useMemo(() => {
-    const map = new Map<string, string>();
+  // 设备全局唯一:已存在于系统任何区块即不可再添加;记录所在位置用于「已在某区块」提示
+  const existingLocations = useMemo(() => {
+    const map = new Map<string, { location: string; isCurrent: boolean }>();
     for (const region of regions) {
       for (const candidate of region.blocks) {
-        if (candidate.id === block.id) continue;
+        const isCurrent = candidate.id === block.id;
         for (const device of candidate.devices) {
-          if (!map.has(device.entity_id)) map.set(device.entity_id, `${region.name}·${candidate.name}`);
+          if (!map.has(device.entity_id)) {
+            map.set(device.entity_id, {
+              location: isCurrent ? '当前区块' : `${region.name}·${candidate.name}`,
+              isCurrent,
+            });
+          }
         }
       }
     }
@@ -297,8 +297,9 @@ export function DevicePickerDialog({ block, onClose }: DevicePickerDialogProps) 
               const friendlyName = String(entity.attributes.friendly_name ?? entity.entity_id);
               const channel = domain === 'switch' ? switchChannelLabel(entity.entity_id, friendlyName) : null;
               const group = domain === 'light' && isGroupLightEntity(entity.entity_id, allEntityIds);
-              const added = blockExisting.has(entity.entity_id);
-              const elsewhere = added ? null : entityLocations.get(entity.entity_id) ?? null;
+              const existing = existingLocations.get(entity.entity_id);
+              const added = existing !== undefined;
+              const elsewhere = existing && !existing.isCurrent ? existing.location : null;
               const checked = selected.has(entity.entity_id);
               return (
                 <div
@@ -331,7 +332,7 @@ export function DevicePickerDialog({ block, onClose }: DevicePickerDialogProps) 
             })}
           </div>
         )}
-        <p className="picker-hint">同一区块内的设备不能重复添加；同一设备可以添加到多个区块（如走廊灯同时入 A、B 区块），多键开关建议添加标注「整组」的灯光实体</p>
+        <p className="picker-hint">一个设备只能存在于系统的一个区块中：已添加到其它区块的设备需先从原区块移除才能添加到此处。多键开关建议添加标注「整组」的灯光实体</p>
       </div>
     </Dialog>
   );

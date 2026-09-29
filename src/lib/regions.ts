@@ -145,16 +145,18 @@ export function moveDevice(
 
 // ---------- 设备(挂在区域块上) ----------
 
-/** 向区域块追加设备;同一区块内已存在的 entity_id 自动跳过(同一设备允许出现在多个区块) */
+/** 向区域块追加设备;该 entity_id 已存在于系统任何区块时自动跳过(设备全局唯一) */
 export function addDevicesToBlock(
   regions: Region[],
   blockId: string,
   devices: DeviceConfig[],
 ): Region[] {
+  const existing = new Set(
+    regions.flatMap((region) => region.blocks.flatMap((block) => block.devices.map((device) => device.entity_id))),
+  );
   return mapBlocks(regions, (b) => {
     if (b.id !== blockId) return b;
-    const blockExisting = new Set(b.devices.map((device) => device.entity_id));
-    const fresh = devices.filter((d) => !blockExisting.has(d.entity_id));
+    const fresh = devices.filter((d) => !existing.has(d.entity_id));
     return fresh.length > 0 ? { ...b, devices: [...b.devices, ...fresh] } : b;
   });
 }
