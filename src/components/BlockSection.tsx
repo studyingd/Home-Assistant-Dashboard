@@ -120,9 +120,7 @@ export function BlockSection({
         >
           {states === null
             ? visibleDevices.map((device) => <SkeletonCard key={device.entity_id} />)
-              : visibleDevices.map((device, deviceIndex) => {
-                const previous = visibleDevices[deviceIndex - 1];
-                const next = visibleDevices[deviceIndex + 1];
+              : visibleDevices.map((device) => {
                 const dropSide =
                   over?.id === device.entity_id ? (over.after ? ' drop-after' : ' drop-before') : '';
                 return (
@@ -183,8 +181,6 @@ export function BlockSection({
                     {device.hiddenFromUsers && !readOnly && <span className="device-visibility-badge" title="仅管理员可见"><Icon name="lock" size={12} /></span>}
                     {editMode && (
                       <div className="corner-badges">
-                        <IconButton icon="arrow-up" label={`上移设备 ${device.name ?? device.entity_id}`} size={15} className="sm" disabled={!previous} onClick={() => previous && onMoveDevice(device.entity_id, previous.entity_id, false)} />
-                        <IconButton icon="arrow-down" label={`下移设备 ${device.name ?? device.entity_id}`} size={15} className="sm" disabled={!next} onClick={() => next && onMoveDevice(device.entity_id, next.entity_id, true)} />
                         <IconButton
                           icon="pencil"
                           label={`编辑设备 ${device.name ?? device.entity_id}`}
