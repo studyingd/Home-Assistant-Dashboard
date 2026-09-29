@@ -5,6 +5,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts index.html ./
+COPY shared ./shared
 COPY src ./src
 COPY public ./public
 RUN npm run build
@@ -26,6 +27,7 @@ WORKDIR /app
 COPY --from=runtime-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node server ./server
+COPY --chown=node:node shared ./shared
 RUN mkdir -p /data && chown node:node /data
 
 USER node
