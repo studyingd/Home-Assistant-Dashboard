@@ -128,9 +128,23 @@ export function DevicePickerDialog({ block, onClose }: DevicePickerDialogProps) 
   const [filter, setFilter] = useState<DomainFilter>('all');
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const regionExisting = useMemo(() => {
-    const region = regions.find((item) => item.blocks.some((candidate) => candidate.id === block.id));
-    return new Set(region?.blocks.flatMap((candidate) => candidate.devices.map((device) => device.entity_id)) ?? []);
+  // 当前区块已添加的实体:仍禁止在同一区块内重复;其它区块的重复改为提示而非禁止
+  const blockExisting = useMemo(
+    () => new Set(block.devices.map((device) => device.entity_id)),
+    [block.devices],
+  );
+  // 设备在其它区块的分布(「已在某区块」提示)
+  const entityLocations = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const region of regions) {
+      for (const candidate of region.blocks) {
+        if (candidate.id === block.id) continue;
+        for (const device of candidate.devices) {
+          if (!map.has(device.entity_id)) map.set(device.entity_id, `${region.name}·${candidate.name}`);
+        }
+      }
+    }
+    return map;
   }, [regions, block.id]);
 
   // cover 域对象 ID 列表:用于识别开窗器等设备的附属灯实体
@@ -283,7 +297,8 @@ export function DevicePickerDialog({ block, onClose }: DevicePickerDialogProps) 
               const friendlyName = String(entity.attributes.friendly_name ?? entity.entity_id);
               const channel = domain === 'switch' ? switchChannelLabel(entity.entity_id, friendlyName) : null;
               const group = domain === 'light' && isGroupLightEntity(entity.entity_id, allEntityIds);
-              const added = regionExisting.has(entity.entity_id);
+              const added = blockExisting.has(entity.entity_id);
+              const elsewhere = added ? null : entityLocations.get(entity.entity_id) ?? null;
               const checked = selected.has(entity.entity_id);
               return (
                 <div
@@ -310,13 +325,13 @@ export function DevicePickerDialog({ block, onClose }: DevicePickerDialogProps) 
                     <span className="picker-row__name">{friendlyName}</span>
                     <span className="picker-row__id">{entity.entity_id}</span>
                   </span>
-                  <span className="chip">{DOMAIN_LABELS[domain] ?? domain}{group ? ' · 整组' : channel ? ` · ${channel}` : ''}</span>
+                  <span className="chip">{DOMAIN_LABELS[domain] ?? domain}{group ? ' · 整组' : channel ? ` · ${channel}` : ''}{added ? ' · 已添加' : elsewhere ? ` · 已在${elsewhere}` : ''}</span>
                 </div>
               );
             })}
           </div>
         )}
-        <p className="picker-hint">同一区域内的设备不能重复添加；多键开关建议添加标注「整组」的灯光实体，卡片会自动聚合各路通道与总开关</p>
+        <p className="picker-hint">同一区块内的设备不能重复添加；同一设备可以添加到多个区块（如走廊灯同时入 A、B 区块），多键开关建议添加标注「整组」的灯光实体</p>
       </div>
     </Dialog>
   );
