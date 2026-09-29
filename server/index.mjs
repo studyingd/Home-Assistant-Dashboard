@@ -648,7 +648,8 @@ async function handleApi(req, res, pathname) {
       return etagFor(body);
     });
     audit('dashboard_config_updated', { ip, username: sessionFor(req)?.sub, regions: normalizedData.regions.length });
-    haProxy.disconnectClients();
+    // 原地刷新各连接的实体白名单:纯移动/改名等白名单不变的保存不再断线重连
+    void haProxy.refreshClients().catch(() => {});
     send(res, 204, '', { etag: newEtag });
     return;
   }

@@ -224,7 +224,28 @@ function validateCommand(message, allowed, admin, serviceLimiter, historyLimiter
 export function createHaProxy({ hassUrlFile, hassTokenFile, getAllowedEntities, isAdminRequest, isAllowedOrigin, clientIp, audit, recordOperation }) {
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: 64 * 1024 });
   const ipConnections = new Map();
-  const clients = new Set();
+  const clients = new Map(); // client → { admin, allowed, entitySubId }
+
+  // 连接时与配置变更后共用的白名单计算(配置实体 + HA_EXTRA_ENTITIES 及关联风速 select)
+  async function computeAllowed(admin) {
+    const allowed = await getAllowedEntities(admin);
+    const extra = String(process.env.HA_EXTRA_ENTITIES || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    const allowedClimateStems = new Set([...allowed]
+      .filter((id) => id.startsWith('climate.'))
+      .map((id) => id.slice('climate.'.length).replace(/_air_conditioner(?:_\d+)?$/, '').toLowerCase()));
+    for (const entityId of extra) {
+      if (admin || !entityId.startsWith('select.')) {
+        if (admin) allowed.add(entityId);
+        continue;
+      }
+      const stem = entityId.slice('select.'.length).toLowerCase();
+      if ([...allowedClimateStems].some((base) => stem.startsWith(`${base}_`))) allowed.add(entityId);
+    }
+    return allowed;
+  }
 
   wss.on('connection', async (client, req) => {
     const ip = clientIp(req);
@@ -247,23 +268,9 @@ export function createHaProxy({ hassUrlFile, hassTokenFile, getAllowedEntities, 
     let upstream;
     try {
       const { url, token } = await loadHassCredentials({ hassUrlFile, hassTokenFile });
-      clients.add(client);
-      const allowed = await getAllowedEntities(admin);
-      const extra = String(process.env.HA_EXTRA_ENTITIES || '')
-        .split(',')
-        .map((id) => id.trim())
-        .filter(Boolean);
-      const allowedClimateStems = new Set([...allowed]
-        .filter((id) => id.startsWith('climate.'))
-        .map((id) => id.slice('climate.'.length).replace(/_air_conditioner(?:_\d+)?$/, '').toLowerCase()));
-      for (const entityId of extra) {
-        if (admin || !entityId.startsWith('select.')) {
-          if (admin) allowed.add(entityId);
-          continue;
-        }
-        const stem = entityId.slice('select.'.length).toLowerCase();
-        if ([...allowedClimateStems].some((base) => stem.startsWith(`${base}_`))) allowed.add(entityId);
-      }
+      const allowed = await computeAllowed(admin);
+      const info = { admin, allowed, entitySubId: null };
+      clients.set(client, info);
 
       upstream = new WebSocket(wsUrlFromHass(url), {
         perMessageDeflate: false,
@@ -374,6 +381,7 @@ export function createHaProxy({ hassUrlFile, hassTokenFile, getAllowedEntities, 
           return;
         }
         commandTypes.set(message.id, message.type);
+        if (message.type === 'subscribe_entities') info.entitySubId = message.id;
         if (message.type === 'unsubscribe_events') commandTypes.delete(message.subscription);
         if (!upstreamReady || upstream.readyState !== WebSocket.OPEN) {
           const pending = pendingOperations.get(message.id);
@@ -426,11 +434,41 @@ export function createHaProxy({ hassUrlFile, hassTokenFile, getAllowedEntities, 
       wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
     },
     disconnectClients() {
-      for (const client of clients) client.close(1012, 'dashboard configuration changed');
+      for (const [client] of clients) client.close(1012, 'dashboard configuration changed');
       clients.clear();
     },
+    /** 配置变更后原地刷新各连接的白名单;新增实体注入一次完整状态,避免断线重连 */
+    async refreshClients() {
+      for (const [client, info] of clients) {
+        if (client.readyState !== WebSocket.OPEN) continue;
+        const previous = new Set(info.allowed);
+        const next = await computeAllowed(info.admin);
+        info.allowed.clear();
+        for (const entityId of next) info.allowed.add(entityId);
+        const additions = [...next].filter((entityId) => !previous.has(entityId));
+        if (additions.length === 0 || info.entitySubId === null) continue;
+        try {
+          const { url, token } = await loadHassCredentials({ hassUrlFile, hassTokenFile });
+          const response = await fetch(`${url.replace(/\/$/, '')}/api/states`, {
+            headers: { authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(8_000),
+          });
+          if (!response.ok) continue;
+          const all = await response.json();
+          const snapshot = {};
+          for (const state of Array.isArray(all) ? all : []) {
+            if (typeof state?.entity_id === 'string' && additions.includes(state.entity_id)) snapshot[state.entity_id] = state;
+          }
+          if (Object.keys(snapshot).length > 0 && client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ id: info.entitySubId, type: 'event', event: { a: snapshot } }));
+          }
+        } catch {
+          // HA 暂时不可达:白名单已原地更新,状态注入等下次变更再试
+        }
+      }
+    },
     close() {
-      for (const client of clients) client.close(1001, 'server shutdown');
+      for (const [client] of clients) client.close(1001, 'server shutdown');
       clients.clear();
       wss.close();
     },
