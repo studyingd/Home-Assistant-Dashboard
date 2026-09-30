@@ -146,3 +146,20 @@ test('整类插座模式排除灯光面板开关(W1)包含真插座;整类窗帘
     ['cover.lumi_curtain_01'],
   );
 });
+test('整类 cover 模式按变体区分开窗器与窗帘;未带变体的旧规则匹配全部 cover', () => {
+  const AVAILABLE = new Set(['cover.liyan_a101_window_opener', 'cover.lumi_curtain_01']);
+  const coverVariants = new Map([['cover.liyan_a101_window_opener', 'window'], ['cover.lumi_curtain_01', 'curtain']]);
+  const base = { id: 'a3', name: 't', time: '08:00', days: [1], action: 'turn_on', enabled: true, target_mode: 'domain', target_domain: 'cover', entity_ids: [] };
+  assert.deepEqual(
+    toHaAutomation({ ...base, target_variant: 'window' }, AVAILABLE, AVAILABLE, { coverVariants }).actions[0].target.entity_id,
+    ['cover.liyan_a101_window_opener'],
+  );
+  assert.deepEqual(
+    toHaAutomation({ ...base, target_variant: 'curtain' }, AVAILABLE, AVAILABLE, { coverVariants }).actions[0].target.entity_id,
+    ['cover.lumi_curtain_01'],
+  );
+  assert.deepEqual(
+    toHaAutomation({ ...base, target_variant: undefined }, AVAILABLE, AVAILABLE, { coverVariants }).actions[0].target.entity_id.sort(),
+    ['cover.liyan_a101_window_opener', 'cover.lumi_curtain_01'],
+  );
+});

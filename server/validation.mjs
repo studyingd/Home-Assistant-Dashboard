@@ -50,11 +50,12 @@ export function validateAutomation(value, allowedEntities) {
   const targetMode = value.target_mode || 'devices';
   if (!['devices', 'domain'].includes(targetMode)) return false;
   if (targetMode === 'domain') {
-    if (!['climate', 'light'].includes(value.target_domain)) return false;
+    if (!['climate', 'light', 'switch', 'cover'].includes(value.target_domain)) return false;
+    if (value.target_variant !== undefined && !['window', 'curtain'].includes(value.target_variant)) return false;
   } else {
     if (!Array.isArray(value.entity_ids) || value.entity_ids.length === 0 || value.entity_ids.length > MAX_AUTOMATION_ENTITIES) return false;
     if (value.entity_ids.some((entityId) => !validateString(entityId, 255) || !allowedEntities.has(entityId))) return false;
-    if (value.entity_ids.some((entityId) => !['climate', 'switch', 'light'].includes(entityId.split('.')[0]))) return false;
+    if (value.entity_ids.some((entityId) => !['climate', 'switch', 'light', 'cover'].includes(entityId.split('.')[0]))) return false;
   }
   if (!['turn_on', 'turn_off'].includes(value.action)) return false;
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value.time)) return false;

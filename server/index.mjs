@@ -405,7 +405,7 @@ async function setHaAutomationState(automation) {
   }
 }
 
-async function writeHaAutomations(automations, dashboardEntities = new Set()) {
+async function writeHaAutomations(automations, dashboardEntities = new Set(), context = {}) {
   const current = await readHaAutomations(dashboardEntities);
   const availableStates = await haRest('/api/states');
   const availableEntities = new Set(Array.isArray(availableStates) ? availableStates.map((state) => state?.entity_id).filter((id) => typeof id === 'string') : []);
@@ -416,7 +416,7 @@ async function writeHaAutomations(automations, dashboardEntities = new Set()) {
     for (const item of automations) {
       await haRest(`/api/config/automation/config/${encodeURIComponent(item.id)}`, {
         method: 'POST',
-        body: JSON.stringify(toHaAutomation(item, availableEntities, dashboardEntities)),
+        body: JSON.stringify(toHaAutomation(item, availableEntities, dashboardEntities, context)),
       });
       await setHaAutomationState(item);
     }
@@ -434,7 +434,7 @@ async function writeHaAutomations(automations, dashboardEntities = new Set()) {
     await Promise.allSettled([...nextIds].filter((id) => !snapshotIds.has(id)).map((id) => haRest(`/api/config/automation/config/${encodeURIComponent(id)}`, { method: 'DELETE' })));
     await Promise.allSettled(snapshot.map((item) => haRest(`/api/config/automation/config/${encodeURIComponent(item.id)}`, {
       method: 'POST',
-      body: JSON.stringify(toHaAutomation(item, availableEntities, dashboardEntities)),
+      body: JSON.stringify(toHaAutomation(item, availableEntities, dashboardEntities, context)),
     }).then(() => setHaAutomationState(item))));
     throw error;
   }
@@ -673,6 +673,16 @@ async function handleApi(req, res, pathname) {
     const data = await readJsonBody(req, MAX_CONFIG_BODY);
     const automations = data?.automations;
     const allowed = await allowedEntities(true);
+    // cover 域变体(开窗器/窗帘)来自设备配置,供按类型目标过滤
+    const configSnapshot = await configStore.readConfig();
+    const coverVariants = new Map();
+    for (const region of Array.isArray(configSnapshot?.regions) ? configSnapshot.regions : []) {
+      for (const block of Array.isArray(region?.blocks) ? region.blocks : []) {
+        for (const device of Array.isArray(block?.devices) ? block.devices : []) {
+          if (device?.entity_id && device?.coverVariant) coverVariants.set(device.entity_id, device.coverVariant);
+        }
+      }
+    }
     if (!Array.isArray(automations) || automations.length > 100 || automations.some((item) => !validateAutomation(item, allowed))) {
       sendJson(res, 400, { error: 'invalid_automations' });
       return;
@@ -687,7 +697,7 @@ async function handleApi(req, res, pathname) {
       return;
     }
     try {
-      const saved = await writeHaAutomations(automations, allowed);
+      const saved = await writeHaAutomations(automations, allowed, { coverVariants });
       audit('automations_updated', { ip, username: sessionFor(req)?.sub, count: automations.length });
       sendJson(res, 200, { automations: saved });
     } catch (error) {

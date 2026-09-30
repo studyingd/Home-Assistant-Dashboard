@@ -65,8 +65,10 @@ export interface AutomationConfig {
   entity_ids: string[];
   /** 设备选择方式：指定实体，或匹配整个 Home Assistant 设备域 */
   target_mode?: 'devices' | 'domain';
-  /** target_mode 为 domain 时的 HA 域，如 climate、light */
+  /** target_mode 为 domain 时的 HA 域，如 climate、light、switch、cover */
   target_domain?: string;
+  /** target_domain 为 cover 时的细分变体：开窗器 window / 窗帘 curtain */
+  target_variant?: 'window' | 'curtain';
   action: 'turn_on' | 'turn_off';
   time: string;
   days: number[];

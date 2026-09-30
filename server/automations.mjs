@@ -54,8 +54,8 @@ export function lightControlEntities(entityId, availableEntities) {
   return channels.length > 0 ? channels : [entityId];
 }
 
-/** 看板自动化模型 → HA 自动化配置(灯光目标会展开为继电器通道) */
-export function toHaAutomation(automation, availableEntities, dashboardEntities = availableEntities) {
+/** 看板自动化模型 → HA 自动化配置(灯光目标展开为继电器通道;cover 目标按变体过滤) */
+export function toHaAutomation(automation, availableEntities, dashboardEntities = availableEntities, context = {}) {
   const weekdays = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
   const targetIds = automation.target_mode === 'domain'
     ? [...new Set([...dashboardEntities]
@@ -65,7 +65,10 @@ export function toHaAutomation(automation, availableEntities, dashboardEntities 
         // 插座类型反过来排除灯光面板开关(它们属于灯光)
         : automation.target_domain === 'switch'
           ? entityId.startsWith('switch.') && !isLightPanelSwitch(entityId, availableEntities)
-          : entityId.startsWith(`${automation.target_domain}.`))
+        // cover 域按看板配置的变体细分:开窗器(window)/窗帘(curtain);旧规则未带变体时匹配全部 cover
+          : automation.target_domain === 'cover'
+            ? entityId.startsWith('cover.') && (!automation.target_variant || context.coverVariants?.get(entityId) === automation.target_variant)
+            : entityId.startsWith(`${automation.target_domain}.`))
       .flatMap((entityId) => automation.target_domain === 'light' ? lightControlEntities(entityId, availableEntities) : [entityId]))]
     : automation.entity_ids.flatMap((entityId) => lightControlEntities(entityId, availableEntities));
   if (targetIds.length === 0) {
