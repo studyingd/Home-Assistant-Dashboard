@@ -366,12 +366,9 @@ button.region-tab.add:hover {
   font-size: 15px;
   font-weight: 600;
   color: var(--text-1);
-  /* 先由 CardShell 缩小字号到单行;缩到下限仍放不下时换行到第二行(最多两行,不再截断) */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .card__sub {
