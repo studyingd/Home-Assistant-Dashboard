@@ -35,7 +35,8 @@ export function CardShell({
     const fitName = (force = false) => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
-        const availableWidth = element.clientWidth;
+        // 用 getBoundingClientRect 取小数精度宽度,clientWidth 会向下取整造成误判
+        const availableWidth = element.getBoundingClientRect().width;
         if (!force && Math.abs(availableWidth - lastWidth) < 0.5) return;
         lastWidth = availableWidth;
         element.style.fontSize = '';
@@ -57,15 +58,14 @@ export function CardShell({
         const contentWidth = measureWidth(baseSize);
         if (availableWidth <= 0 || contentWidth <= availableWidth) return;
 
-        // 预留 6px，避免系统缩放/小数像素取整后刚好溢出；
-        // 再按候选字号实测校验，仍溢出则每次降 0.25px 直到真正放下(下限 10px)
-        const safeWidth = Math.max(0, availableWidth - 6);
+        // 按比例算出候选字号(不做预留扣减,由下面的实测校验保证不溢出)，
+        // 实测仍溢出则每次降 0.25px 直到真正放下(下限 9px)
         let fittedSize = Math.max(
-          10,
-          Math.floor((baseSize * safeWidth * 10) / contentWidth) / 10,
+          9,
+          Math.floor((baseSize * availableWidth * 10) / contentWidth) / 10,
         );
-        while (fittedSize > 10 && measureWidth(fittedSize) > availableWidth) {
-          fittedSize = Math.max(10, fittedSize - 0.25);
+        while (fittedSize > 9 && measureWidth(fittedSize) > availableWidth) {
+          fittedSize = Math.max(9, fittedSize - 0.25);
         }
         element.style.fontSize = `${fittedSize}px`;
       });
