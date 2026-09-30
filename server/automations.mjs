@@ -1,6 +1,6 @@
 // 看板托管自动化的纯逻辑:HA 自动化配置 ↔ 看板模型互转。
 // 通道展开/归一规则统一引用 shared/switch-panels.mjs(前后端唯一来源),本模块保持无副作用(不发请求)。
-import { lightMainEntityCandidates, lightMainStem, panelChannelStem, panelControlEntityIds } from '../shared/switch-panels.mjs';
+import { isLightPanelSwitch, lightMainEntityCandidates, lightMainStem, panelChannelStem, panelControlEntityIds } from '../shared/switch-panels.mjs';
 
 /** 托管自动化在 HA 中的名称前缀 */
 export const AUTOMATION_MARKER = '[Seeed 看板自动化]';
@@ -59,7 +59,10 @@ export function toHaAutomation(automation, availableEntities, dashboardEntities 
   const weekdays = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
   const targetIds = automation.target_mode === 'domain'
     ? [...new Set([...dashboardEntities]
-      .filter((entityId) => entityId.startsWith(`${automation.target_domain}.`))
+      .filter((entityId) => automation.target_domain === 'light'
+        // 灯光除 light 域外,还包含看板上的单键灯光面板开关(W1 等,形态与插座相似,靠整组灯主体存在性区分)
+        ? entityId.startsWith('light.') || isLightPanelSwitch(entityId, availableEntities)
+        : entityId.startsWith(`${automation.target_domain}.`))
       .flatMap((entityId) => automation.target_domain === 'light' ? lightControlEntities(entityId, availableEntities) : [entityId]))]
     : automation.entity_ids.flatMap((entityId) => lightControlEntities(entityId, availableEntities));
   if (targetIds.length === 0) {

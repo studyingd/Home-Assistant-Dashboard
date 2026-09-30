@@ -31,6 +31,28 @@ export function panelSingleChannelId(stem) {
   return `switch.${stem}_switch`;
 }
 
+/** 单路继电器开关实体(switch.{stem}_switch 形态) → 设备 stem;其它实体返回 null */
+export function panelSingleChannelStem(entityId) {
+  if (!entityId.startsWith('switch.')) return null;
+  const objectId = entityId.slice('switch.'.length);
+  return objectId.endsWith('_switch') && objectId.length > '_switch'.length
+    ? objectId.slice(0, -'_switch'.length)
+    : null;
+}
+
+/**
+ * 开关域实体是否属于灯光面板的单键开关(W1 等):形态为 switch.{stem}_switch,
+ * 且 HA 中存在该设备的整组灯光主体(_all_switch 新命名)。
+ * 整组主体存在才能证明它是灯光开关而非插座等同类形态设备;
+ * availableEntities 传 null 时跳过存在性校验(仅形态判断,用于实体数据未就绪时)。
+ */
+export function isLightPanelSwitch(entityId, availableEntities) {
+  const stem = panelSingleChannelStem(entityId);
+  if (!stem) return false;
+  if (!availableEntities) return true;
+  return availableEntities.has(`light.${stem}_all_switch`) || availableEntities.has(`light.${stem}_all_switch_indicator`);
+}
+
 /** 设备 stem → 面板全部可控制继电器(单路 + 分路),用于服务端白名单与操作日志归属 */
 export function panelControlEntityIds(stem) {
   return [panelSingleChannelId(stem), ...panelChannelIds(stem)];

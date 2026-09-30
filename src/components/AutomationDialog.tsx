@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useHass } from '../ha/useHass';
 import { useDashboardConfig } from '../hooks/useDashboardConfig';
 import { fetchAutomations, saveAutomations, type ExistingAutomation } from '../lib/automations';
 import type { AutomationConfig } from '../lib/types';
 import { Icon, type IconName } from '../icons';
 import { Dialog } from './ui/Dialog';
+import { isLightPanelSwitch } from '../../shared/switch-panels.mjs';
 
 const DAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 const AUTOMATABLE_DOMAINS = ['climate', 'light'] as const;
@@ -24,9 +25,17 @@ export function AutomationDialog({ onClose }: { onClose: () => void }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const devices = useMemo(() => regions.flatMap((region) => region.blocks.flatMap((block) => block.devices)).filter((device) => AUTOMATABLE_DOMAINS.includes(device.entity_id.split('.')[0] as (typeof AUTOMATABLE_DOMAINS)[number])), [regions]);
+  const stateIds = useMemo(() => new Set(states ? Object.keys(states) : []), [states]);
+  /** 可自动化类型:灯光/空调域;开关域中属于灯光面板的单键开关(W1 等)归入灯光,其余(插座等)排除 */
+  const automatableType = useCallback((entityId: string): 'climate' | 'light' | null => {
+    const domain = entityId.split('.')[0];
+    if (domain === 'climate' || domain === 'light') return domain;
+    if (domain === 'switch' && isLightPanelSwitch(entityId, states ? stateIds : null)) return 'light';
+    return null;
+  }, [states, stateIds]);
+  const devices = useMemo(() => regions.flatMap((region) => region.blocks.flatMap((block) => block.devices)).filter((device) => automatableType(device.entity_id) !== null), [regions, automatableType]);
   const names = useMemo(() => new Map(devices.map((device) => [device.entity_id, device.name || states?.[device.entity_id]?.attributes?.friendly_name || device.entity_id])), [devices, states]);
-  const groupedDevices = useMemo(() => regions.map((region) => ({ ...region, blocks: region.blocks.map((block) => { const typeMap = new Map<string, typeof block.devices>(); block.devices.filter((device) => AUTOMATABLE_DOMAINS.includes(device.entity_id.split('.')[0] as (typeof AUTOMATABLE_DOMAINS)[number])).forEach((device) => { const type = device.entity_id.split('.')[0]; typeMap.set(type, [...(typeMap.get(type) ?? []), device]); }); return { ...block, types: Array.from(typeMap.entries()).map(([type, typeDevices]) => ({ type, devices: typeDevices })) }; }).filter((block) => block.types.length > 0) })).filter((region) => region.blocks.length > 0), [regions]);
+  const groupedDevices = useMemo(() => regions.map((region) => ({ ...region, blocks: region.blocks.map((block) => { const typeMap = new Map<string, typeof block.devices>(); block.devices.forEach((device) => { const type = automatableType(device.entity_id); if (!type) return; typeMap.set(type, [...(typeMap.get(type) ?? []), device]); }); return { ...block, types: Array.from(typeMap.entries()).map(([type, typeDevices]) => ({ type, devices: typeDevices })) }; }).filter((block) => block.types.length > 0) })).filter((region) => region.blocks.length > 0), [regions, automatableType]);
   useEffect(() => { fetchAutomations().then((data) => { setItems(data.automations); setExisting(data.existing); }).catch((err) => setError(err instanceof Error ? err.message : '自动化加载失败')).finally(() => setLoading(false)); }, []);
   const update = (id: string, patch: Partial<AutomationConfig>) => setItems((prev) => prev.map((item) => item.id === id ? { ...item, ...patch } : item));
   const toggleDevice = (id: string, entityId: string, checked: boolean) => setItems((prev) => prev.map((item) => item.id === id ? { ...item, entity_ids: checked ? [...new Set([...item.entity_ids, entityId])] : item.entity_ids.filter((value) => value !== entityId) } : item));

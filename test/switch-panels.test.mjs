@@ -13,6 +13,7 @@ import {
   panelChannelIds,
   panelChannelStem,
   panelControlEntityIds,
+  isLightPanelSwitch,
 } from '../shared/switch-panels.mjs';
 
 test('lightMainStem 识别新旧整组主体与键指示灯', () => {
@@ -65,4 +66,18 @@ test('channelKeyFromText 识别数字与左右中键', () => {
   assert.deepEqual(channelKeyFromText('前台 开关右键'), { kind: 'right' });
   assert.deepEqual(channelKeyFromText('前台 开关中键'), { kind: 'middle' });
   assert.equal(channelKeyFromText('客厅主灯 light.main'), null);
+});
+
+test('isLightPanelSwitch: 单键灯光面板成立,插座/分路通道/灯光域实体不成立', () => {
+  // W1 单键面板:HA 中存在整组灯主体 → 是灯光面板开关
+  const available = new Set(['light.xiaomi_w1_07ef_all_switch']);
+  assert.equal(isLightPanelSwitch('switch.xiaomi_w1_07ef_switch', available), true);
+  // 实体数据未就绪(null)时仅按形态判断
+  assert.equal(isLightPanelSwitch('switch.xiaomi_w1_07ef_switch', null), true);
+  // cuco 插座形态相似但没有整组灯主体 → 排除
+  assert.equal(isLightPanelSwitch('switch.cuco_v3_3244_switch', new Set(['light.cuco_v3_3244_indicator_light'])), false);
+  // W2 分路通道是 _switch_service 后缀,不属于单键形态
+  assert.equal(isLightPanelSwitch('switch.xiaomi_w2_4a4e_left_switch_service', available), false);
+  // 灯光域实体不属于开关域判断范围
+  assert.equal(isLightPanelSwitch('light.xiaomi_w2_4a4e_all_switch', available), false);
 });

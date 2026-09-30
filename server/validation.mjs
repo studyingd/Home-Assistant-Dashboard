@@ -28,7 +28,6 @@ export function validateDashboard(value) {
       if (block.hiddenFromUsers !== undefined && typeof block.hiddenFromUsers !== 'boolean') return false;
       devices += block.devices.length;
       if (devices > 2_000) return false;
-      const entityIds = new Set();
       for (const device of block.devices) {
         if (!device || typeof device !== 'object') return false;
         if (typeof device.entity_id !== 'string' || !/^[a-z0-9_]+\.[a-z0-9_]+$/.test(device.entity_id)) return false;

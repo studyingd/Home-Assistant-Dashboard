@@ -103,3 +103,27 @@ test('toHaAutomation expands light targets to channels and throws without target
   assert.equal(config.initial_state, true);
   assert.throws(() => toHaAutomation({ ...automation, entity_ids: [] }, new Set(), new Set()), /没有可用于自动化的/);
 });
+
+test('整类灯光模式包含看板上的单键灯光面板开关(W1),排除形态相似的插座开关', () => {
+  const AVAILABLE = new Set([
+    'switch.xiaomi_w1_07ef_switch',
+    'light.xiaomi_w1_07ef_all_switch',
+    'switch.cuco_v3_3244_switch',
+    'light.cuco_v3_3244_indicator_light',
+  ]);
+  // 看板同时配置了 W1(灯光面板开关)和 cuco 插座开关:两者形态相似,只有 W1 属于灯光
+  const DASHBOARD = new Set(['switch.xiaomi_w1_07ef_switch', 'switch.cuco_v3_3244_switch']);
+  const automation = {
+    id: 'a1',
+    name: '整类灯光含 W1',
+    time: '08:00',
+    days: [1],
+    action: 'turn_on',
+    enabled: true,
+    target_mode: 'domain',
+    target_domain: 'light',
+    entity_ids: [],
+  };
+  const config = toHaAutomation(automation, AVAILABLE, DASHBOARD);
+  assert.deepEqual(config.actions[0].target.entity_id, ['switch.xiaomi_w1_07ef_switch']);
+});
