@@ -39,25 +39,34 @@ export function CardShell({
         if (!force && Math.abs(availableWidth - lastWidth) < 0.5) return;
         lastWidth = availableWidth;
         element.style.fontSize = '';
-        const measure = element.cloneNode(true) as HTMLSpanElement;
-        measure.style.position = 'fixed';
-        measure.style.left = '-100000px';
-        measure.style.width = 'max-content';
-        measure.style.maxWidth = 'none';
-        measure.style.overflow = 'visible';
-        measure.style.textOverflow = 'clip';
-        document.body.appendChild(measure);
-        const contentWidth = measure.getBoundingClientRect().width;
-        measure.remove();
+        const baseSize = Number.parseFloat(getComputedStyle(element).fontSize);
+        // 离线测量文本在指定字号下的单行宽度(复制节点避免影响布局)
+        const measureWidth = (fontSize: number) => {
+          const measure = element.cloneNode(true) as HTMLSpanElement;
+          measure.style.position = 'fixed';
+          measure.style.left = '-100000px';
+          measure.style.width = 'max-content';
+          measure.style.maxWidth = 'none';
+          measure.style.overflow = 'visible';
+          measure.style.fontSize = `${fontSize}px`;
+          document.body.appendChild(measure);
+          const width = measure.getBoundingClientRect().width;
+          measure.remove();
+          return width;
+        };
+        const contentWidth = measureWidth(baseSize);
         if (availableWidth <= 0 || contentWidth <= availableWidth) return;
 
-        const baseSize = Number.parseFloat(getComputedStyle(element).fontSize);
-        // 预留 6px，避免系统缩放/小数像素取整后刚好溢出而重新触发省略号。
+        // 预留 6px，避免系统缩放/小数像素取整后刚好溢出；
+        // 再按候选字号实测校验，仍溢出则每次降 0.25px 直到真正放下(下限 10px)
         const safeWidth = Math.max(0, availableWidth - 6);
-        const fittedSize = Math.max(
+        let fittedSize = Math.max(
           10,
           Math.floor((baseSize * safeWidth * 10) / contentWidth) / 10,
         );
+        while (fittedSize > 10 && measureWidth(fittedSize) > availableWidth) {
+          fittedSize = Math.max(10, fittedSize - 0.25);
+        }
         element.style.fontSize = `${fittedSize}px`;
       });
     };
