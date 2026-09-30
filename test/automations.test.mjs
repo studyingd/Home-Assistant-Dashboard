@@ -127,3 +127,22 @@ test('整类灯光模式包含看板上的单键灯光面板开关(W1),排除形
   const config = toHaAutomation(automation, AVAILABLE, DASHBOARD);
   assert.deepEqual(config.actions[0].target.entity_id, ['switch.xiaomi_w1_07ef_switch']);
 });
+test('整类插座模式排除灯光面板开关(W1)包含真插座;整类窗帘模式透传 cover 实体', () => {
+  const AVAILABLE = new Set([
+    'switch.xiaomi_w1_07ef_switch',
+    'light.xiaomi_w1_07ef_all_switch',
+    'switch.cuco_v3_3244_switch',
+    'light.cuco_v3_3244_indicator_light',
+    'cover.lumi_curtain_01',
+  ]);
+  const DASHBOARD = new Set(['switch.xiaomi_w1_07ef_switch', 'switch.cuco_v3_3244_switch', 'cover.lumi_curtain_01']);
+  const base = { id: 'a2', name: '类型目标', time: '08:00', days: [1], action: 'turn_on', enabled: true, target_mode: 'domain', entity_ids: [] };
+  assert.deepEqual(
+    toHaAutomation({ ...base, target_domain: 'switch' }, AVAILABLE, DASHBOARD).actions[0].target.entity_id,
+    ['switch.cuco_v3_3244_switch'],
+  );
+  assert.deepEqual(
+    toHaAutomation({ ...base, target_domain: 'cover' }, AVAILABLE, DASHBOARD).actions[0].target.entity_id,
+    ['cover.lumi_curtain_01'],
+  );
+});

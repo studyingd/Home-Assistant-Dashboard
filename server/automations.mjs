@@ -62,11 +62,15 @@ export function toHaAutomation(automation, availableEntities, dashboardEntities 
       .filter((entityId) => automation.target_domain === 'light'
         // 灯光除 light 域外,还包含看板上的单键灯光面板开关(W1 等,形态与插座相似,靠整组灯主体存在性区分)
         ? entityId.startsWith('light.') || isLightPanelSwitch(entityId, availableEntities)
-        : entityId.startsWith(`${automation.target_domain}.`))
+        // 插座类型反过来排除灯光面板开关(它们属于灯光)
+        : automation.target_domain === 'switch'
+          ? entityId.startsWith('switch.') && !isLightPanelSwitch(entityId, availableEntities)
+          : entityId.startsWith(`${automation.target_domain}.`))
       .flatMap((entityId) => automation.target_domain === 'light' ? lightControlEntities(entityId, availableEntities) : [entityId]))]
     : automation.entity_ids.flatMap((entityId) => lightControlEntities(entityId, availableEntities));
   if (targetIds.length === 0) {
-    throw Object.assign(new Error(`当前系统没有可用于自动化的${automation.target_domain === 'light' ? '灯光' : '空调'}设备`), { status: 400 });
+    const domainLabel = { light: '灯光', climate: '空调', switch: '插座', cover: '窗帘' }[automation.target_domain] ?? automation.target_domain;
+    throw Object.assign(new Error(`当前系统没有可用于自动化的${domainLabel}设备`), { status: 400 });
   }
   return {
     id: automation.id,
