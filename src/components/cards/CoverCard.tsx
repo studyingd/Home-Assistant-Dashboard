@@ -13,6 +13,10 @@ const SUPPORT_CLOSE = 2;
 const SUPPORT_SET_POSITION = 4;
 const SUPPORT_STOP = 8;
 
+// 打开中/关闭中是瞬态状态:超过该时长仍未变化,说明设备已失联
+// (集成未把状态翻成 unavailable 而是冻结在瞬态,如利旧开窗器掉线时),按离线处理
+const TRANSIENT_STALE_MS = 5 * 60_000;
+
 const STATE_LABELS: Record<string, string> = {
   open: '已打开',
   closed: '已关闭',
@@ -31,7 +35,21 @@ export const CoverCard = memo(function CoverCard({ config, entity }: CoverCardPr
   const attrs = entity.attributes as Record<string, unknown>;
   const variant = config.coverVariant ?? 'curtain';
 
-  const unavailable = entity.state === 'unavailable' || entity.state === 'unknown';
+  // 瞬态状态僵死检测:打开中/关闭中长时间无更新 → 设备失联,按离线处理
+  const lastChangedMs = entity.last_changed ? Date.parse(entity.last_changed) : Number.NaN;
+  const transientStuck =
+    !Number.isNaN(lastChangedMs)
+    && (entity.state === 'opening' || entity.state === 'closing')
+    && Date.now() - lastChangedMs > TRANSIENT_STALE_MS;
+  // 状态冻结时实体不会推送更新,靠本地定时器驱动重渲染以进入僵死判定
+  const [, setStaleTick] = useState(0);
+  useEffect(() => {
+    if (entity.state !== 'opening' && entity.state !== 'closing') return undefined;
+    const timer = window.setInterval(() => setStaleTick((tick) => tick + 1), 30_000);
+    return () => window.clearInterval(timer);
+  }, [entity.state]);
+
+  const unavailable = entity.state === 'unavailable' || entity.state === 'unknown' || transientStuck;
   const name = config.name ?? (attrs.friendly_name as string) ?? entityId;
   const features = typeof attrs.supported_features === 'number' ? attrs.supported_features : 0;
 
@@ -46,7 +64,9 @@ export const CoverCard = memo(function CoverCard({ config, entity }: CoverCardPr
   const position =
     rawPosition ?? (entity.state === 'open' ? 100 : entity.state === 'closed' ? 0 : null);
 
-  const stateLabel = STATE_LABELS[entity.state] ?? entity.state;
+  const stateLabel = transientStuck
+    ? `${entity.state === 'opening' ? '打开中' : '关闭中'}·无响应`
+    : STATE_LABELS[entity.state] ?? entity.state;
   const [pendingState, setPendingState] = useState<string | null>(null);
   const shownState = pendingState ?? entity.state;
   const shownMoving = shownState === 'opening' || shownState === 'closing';
@@ -75,7 +95,7 @@ export const CoverCard = memo(function CoverCard({ config, entity }: CoverCardPr
       unavailable={unavailable}
       trailing={
         <span className="chip">
-          {STATE_LABELS[shownState] ?? stateLabel}
+          {pendingState ? STATE_LABELS[pendingState] ?? pendingState : stateLabel}
           {position !== null && !shownMoving && ` · ${Math.round(position)}%`}
         </span>
       }
